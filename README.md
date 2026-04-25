@@ -61,6 +61,10 @@ Existing tools have real limitations:
 
 **Four tiers** — Deterministic (free, instant), LLM-judge (QAG), agent-trace, and conversation evaluators. Mix and match; pay for LLM calls only where it matters.
 
+**No cold-start** — Generate eval cases from your docs with `generate_from_file()`. No labeled data required to get started.
+
+**Experiment tracking** — Record every run, compare across model versions, catch regressions before they reach users.
+
 ---
 
 ## Install
@@ -244,6 +248,100 @@ Summarize this.,,Long text here,summarization
 ```python
 report.save_json("results.json")
 report.save_csv("results.csv")
+```
+
+---
+
+## Synthetic dataset generation
+
+No labeled data? No problem. Point `generate_from_file()` at your docs and get eval cases ready to run in seconds.
+
+```python
+from multivon_eval import generate_from_file
+
+# Generate QA pairs from your docs
+cases = generate_from_file("docs/faq.md", n=20, task="qa")
+
+# Generate summarization cases
+cases = generate_from_file("docs/whitepaper.txt", n=10, task="summarization")
+
+suite.add_cases(cases)
+report = suite.run(my_model_fn)
+```
+
+From raw text:
+
+```python
+from multivon_eval import generate_from_text
+
+cases = generate_from_text(my_knowledge_base, n=50, task="qa")
+```
+
+Build a hallucination benchmark from your own content:
+
+```python
+from multivon_eval import generate_hallucination_pairs
+
+pairs = generate_hallucination_pairs(my_docs, n=20)
+# Returns: [{question, context, faithful_answer, hallucinated_answer}, ...]
+```
+
+CLI:
+
+```bash
+multivon-eval generate --from docs/faq.md --n 20 --task qa --output cases.jsonl
+```
+
+---
+
+## Experiment tracking
+
+Record every suite run and compare results across model versions, prompt changes, or time. Stored locally in `~/.multivon/experiments/` — no cloud, no account.
+
+```python
+from multivon_eval import Experiment
+
+exp = Experiment("rag-pipeline")
+
+# Run A — baseline
+report_a = suite.run(old_model_fn)
+run_a = exp.record(report_a, tags={"model": "gpt-4o", "prompt_v": "2"})
+
+# Run B — new version
+report_b = suite.run(new_model_fn)
+run_b = exp.record(report_b, tags={"model": "gpt-4o", "prompt_v": "3"})
+
+# Compare
+exp.compare(run_a, run_b)
+```
+
+```
+  ============================================================
+  Experiment comparison: a1b2c3d4 → e5f6g7h8
+  ============================================================
+
+  Metric                   Before           After
+  ------------------------------------------------------------
+  Model                    gpt-4o           gpt-4o
+  Pass rate                  84.0%  →   91.0%  ↑   +7.0%
+  Avg score                 0.8210  →   0.8890  ↑  +0.0680
+  Passed                        42  →       46
+  Failed                         8  →        4
+
+  Evaluator scores         Before           After
+  ------------------------------------------------------------
+  faithfulness             0.7800  →   0.8600  ↑  +0.0800
+  relevance                0.9100  →   0.9300  ↑  +0.0200
+
+  Verdict: IMPROVED — pass rate up +7.0%
+```
+
+CLI:
+
+```bash
+multivon-eval experiments list
+multivon-eval experiments history rag-pipeline
+multivon-eval experiments compare rag-pipeline a1b2c3d4 e5f6g7h8
 ```
 
 ---
