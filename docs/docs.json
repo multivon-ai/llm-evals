@@ -10,10 +10,7 @@
   "colors": {
     "primary": "#7c3aed",
     "light": "#a78bfa",
-    "dark": "#5b21b6",
-    "background": {
-      "dark": "#06060f"
-    }
+    "dark": "#5b21b6"
   },
   "topbarLinks": [
     {
@@ -29,35 +26,36 @@
     "name": "Get in touch",
     "url": "mailto:hello@multivon.ai"
   },
-  "tabs": [
-    {
-      "name": "Guides",
-      "url": "guides"
-    }
-  ],
-  "navigation": [
-    {
-      "group": "Getting Started",
-      "pages": ["introduction", "quickstart"]
-    },
-    {
-      "group": "Evaluators",
-      "pages": [
-        "evaluators/deterministic",
-        "evaluators/llm-judge",
-        "evaluators/agent",
-        "evaluators/conversation"
-      ]
-    },
-    {
-      "group": "Guides",
-      "pages": [
-        "guides/datasets",
-        "guides/ci-cd",
-        "guides/custom-evaluators"
-      ]
-    }
-  ],
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Docs",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": ["introduction", "quickstart"]
+          },
+          {
+            "group": "Evaluators",
+            "pages": [
+              "evaluators/deterministic",
+              "evaluators/llm-judge",
+              "evaluators/agent",
+              "evaluators/conversation"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/datasets",
+              "guides/ci-cd",
+              "guides/custom-evaluators"
+            ]
+          }
+        ]
+      }
+    ]
+  },
   "footerSocials": {
     "github": "https://github.com/multivon-ai",
     "website": "https://multivon.ai"
