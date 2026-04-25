@@ -4,12 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "multivon-eval"
-version = "0.1.0"
+version = "0.1.1"
 description = "AI evaluation for teams that ship models to production"
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
-keywords = ["llm", "evaluation", "ai", "evals", "rag", "agents", "testing"]
+authors = [
+    { name = "Multivon", email = "hello@multivon.ai" }
+]
+keywords = ["llm", "evaluation", "ai", "evals", "rag", "agents", "testing", "llm-judge", "agent-evaluation"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",

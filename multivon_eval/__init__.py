@@ -13,7 +13,7 @@ Quick start:
     report = suite.run(my_model_fn)
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 from .suite import EvalSuite
 from .case import EvalCase, AgentStep, ToolCall
