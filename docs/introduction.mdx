@@ -1,0 +1,45 @@
+---
+title: Introduction
+description: AI evaluation for teams that ship models to production.
+---
+
+**multivon-eval** is an open source Python SDK for evaluating AI outputs — from simple string checks to LLM judges to agent trace analysis.
+
+## Why multivon-eval
+
+Most eval tools force you into one mode: either fast-but-shallow (string matching) or thorough-but-expensive (LLM judge everywhere). multivon-eval gives you four tiers and lets you mix them freely.
+
+<CardGroup cols={2}>
+  <Card title="Deterministic" icon="bolt">
+    String matching, regex, JSON schema, BLEU, ROUGE, latency. Instant, free, no LLM.
+  </Card>
+  <Card title="LLM-as-judge" icon="brain">
+    QAG scoring — yes/no questions instead of unreliable 1-10 ratings. Faithfulness, hallucination, relevance, and more.
+  </Card>
+  <Card title="Agent trace" icon="route">
+    Tool call accuracy, plan quality, step faithfulness, task completion. Framework-agnostic.
+  </Card>
+  <Card title="Conversation" icon="messages">
+    Knowledge retention, relevance, consistency, and completeness across multi-turn sessions.
+  </Card>
+</CardGroup>
+
+## Key concepts
+
+**QAG scoring** — Instead of asking a judge "rate this 1-10", we generate binary yes/no questions about the output and score by fraction answered correctly. More reliable, auditable, and cheaper.
+
+**Tiers** — Use deterministic checks for things you can verify mechanically. Reach for LLM judges only where it matters. Pay for compute selectively.
+
+**CI/CD first** — One line exits with code 1 if your pass rate drops below a threshold. Evals that don't run in CI catch nothing.
+
+## Install
+
+```bash
+pip install multivon-eval
+```
+
+Requires Python 3.10+. Set `ANTHROPIC_API_KEY` and/or `OPENAI_API_KEY` for LLM-judge evaluators.
+
+<Card title="Quickstart" icon="rocket" href="/quickstart">
+  Up and running in 5 minutes
+</Card>

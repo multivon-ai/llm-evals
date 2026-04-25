@@ -1,0 +1,150 @@
+---
+title: Deterministic Evaluators
+description: Instant, free checks that need no LLM.
+---
+
+Deterministic evaluators run in milliseconds with no API calls. Use them as a first pass — if an output fails a string check, there's no need to send it to a judge.
+
+## NotEmpty
+
+Passes if the output is non-empty after stripping whitespace.
+
+```python
+from multivon_eval import NotEmpty
+
+NotEmpty()
+```
+
+## ExactMatch
+
+Passes if the output exactly matches `expected_output` (stripped). Case-insensitive by default.
+
+```python
+from multivon_eval import ExactMatch
+
+ExactMatch()                        # case-insensitive
+ExactMatch(case_sensitive=True)     # strict
+```
+
+Requires `expected_output` on the `EvalCase`.
+
+## Contains
+
+Passes if the output contains all required substrings. Score is the fraction found.
+
+```python
+from multivon_eval import Contains
+
+Contains(["refund policy", "contact us"])               # all required
+Contains(["Paris"], threshold=1.0)                      # must find all
+Contains(["red", "blue", "green"], threshold=0.67)      # 2/3 is enough
+```
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `substrings` | required | List of strings to look for |
+| `case_sensitive` | `False` | Case-sensitive matching |
+| `threshold` | `1.0` | Minimum fraction to pass |
+
+## RegexMatch
+
+Passes if the output matches a regex pattern anywhere.
+
+```python
+from multivon_eval import RegexMatch
+
+RegexMatch(r"\d{4}")          # matches any 4-digit number
+RegexMatch(r"^(yes|no)$")     # exact yes/no
+```
+
+## JSONSchemaEval
+
+Passes if the output is valid JSON that conforms to a JSON Schema.
+
+```python
+from multivon_eval import JSONSchemaEval
+
+JSONSchemaEval({
+    "type": "object",
+    "properties": {
+        "sentiment": {"type": "string", "enum": ["positive", "negative", "neutral"]},
+        "score": {"type": "number", "minimum": 0, "maximum": 1},
+    },
+    "required": ["sentiment", "score"],
+})
+```
+
+## WordCount
+
+Passes if the word count is within `[min_words, max_words]`.
+
+```python
+from multivon_eval import WordCount
+
+WordCount(min_words=50, max_words=200)   # must be 50-200 words
+WordCount(max_words=100)                  # at most 100 words
+WordCount(min_words=10)                   # at least 10 words
+```
+
+## Latency
+
+Passes if response latency is under `max_ms` milliseconds. Requires `latency_ms` to be passed to `evaluate()` — the suite handles this automatically.
+
+```python
+from multivon_eval import Latency
+
+Latency(max_ms=2000)    # must respond within 2 seconds
+```
+
+Score degrades linearly above the limit rather than hard-failing.
+
+## BLEU
+
+BLEU-n score between output and `expected_output`. Pure Python, no dependencies.
+
+```python
+from multivon_eval import BLEU
+
+BLEU()          # BLEU-4 (default), threshold 0.5
+BLEU(n=2)       # bigram BLEU
+BLEU(n=1, threshold=0.7)
+```
+
+Score of 1.0 = perfect match. Includes brevity penalty.
+
+## ROUGE
+
+ROUGE-L F1 score (longest common subsequence) between output and `expected_output`.
+
+```python
+from multivon_eval import ROUGE
+
+ROUGE()                  # threshold 0.5
+ROUGE(threshold=0.7)
+```
+
+Score of 1.0 = perfect recall and precision on LCS.
+
+## StartsWith
+
+Passes if output starts with the given prefix. Case-insensitive by default.
+
+```python
+from multivon_eval import StartsWith
+
+StartsWith("Sure")
+StartsWith("```json", case_sensitive=True)
+```
+
+## Combining evaluators
+
+Evaluators are independent — all run and each contributes its own score and pass/fail.
+
+```python
+suite.add_evaluators(
+    NotEmpty(),
+    WordCount(min_words=20, max_words=300),
+    RegexMatch(r"\d{4}"),      # must mention a year
+    Contains(["Paris"]),
+)
+```

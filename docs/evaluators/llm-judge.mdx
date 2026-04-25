@@ -1,0 +1,174 @@
+---
+title: LLM Judge Evaluators
+description: QAG-based scoring for quality you can't measure with strings.
+---
+
+LLM judge evaluators use a secondary model to assess output quality. multivon-eval uses **QAG scoring** (Question-Answer Generation) — generating binary yes/no questions about the output instead of asking for a numeric 1-10 rating.
+
+**Why QAG?** Binary questions are easier for LLMs to get right, fully auditable (you see which questions passed), and cheaper (shorter prompts).
+
+## Configuration
+
+Set your judge model via environment variables:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+export JUDGE_MODEL=claude-sonnet-4-6       # default
+export JUDGE_PROVIDER=anthropic            # anthropic or openai
+```
+
+The model under test and the judge model can be different providers.
+
+## Faithfulness
+
+Checks that the output is grounded in the provided context — no invented facts.
+
+```python
+from multivon_eval import Faithfulness
+
+Faithfulness()
+Faithfulness(threshold=0.8)
+```
+
+Requires `context` on the `EvalCase`.
+
+```python
+EvalCase(
+    input="What does the report say about Q3 revenue?",
+    context="Q3 revenue was $4.2M, up 18% YoY...",
+)
+```
+
+## Hallucination
+
+Checks that the output doesn't introduce claims not supported by context.
+
+```python
+from multivon_eval import Hallucination
+
+Hallucination()
+```
+
+Requires `context`. Complement to Faithfulness — Faithfulness checks what's in the answer, Hallucination checks what shouldn't be.
+
+## Relevance
+
+Checks that the output actually addresses the input question.
+
+```python
+from multivon_eval import Relevance
+
+Relevance()
+Relevance(threshold=0.7)
+```
+
+No `context` required.
+
+## Coherence
+
+Checks that the output is clear, well-structured, and logically sound.
+
+```python
+from multivon_eval import Coherence
+
+Coherence()
+```
+
+## Toxicity
+
+Checks that the output is safe, non-harmful, and appropriate.
+
+```python
+from multivon_eval import Toxicity
+
+Toxicity()
+```
+
+## Bias
+
+Checks that the output is free of demographic, political, or cultural bias.
+
+```python
+from multivon_eval import Bias
+
+Bias()
+```
+
+## Summarization
+
+Checks that a summary captures the key points of the source faithfully.
+
+```python
+from multivon_eval import Summarization
+
+Summarization()
+```
+
+Requires `context` (the source document).
+
+## AnswerAccuracy
+
+Checks factual correctness of the output against `expected_output`.
+
+```python
+from multivon_eval import AnswerAccuracy
+
+AnswerAccuracy()
+```
+
+## ContextPrecision
+
+For RAG systems: checks that retrieved context is actually relevant to the question.
+
+```python
+from multivon_eval import ContextPrecision
+
+ContextPrecision()
+```
+
+## ContextRecall
+
+For RAG systems: checks that all information needed to answer the question was retrieved.
+
+```python
+from multivon_eval import ContextRecall
+
+ContextRecall()
+```
+
+## CustomRubric
+
+Define your own yes/no criteria. Each criterion is a `(question, expected_answer)` tuple.
+
+```python
+from multivon_eval import CustomRubric
+
+CustomRubric(
+    name="support_quality",
+    criteria=[
+        ("Does the response acknowledge the customer's problem?", True),
+        ("Does the response provide a concrete next step?", True),
+        ("Does the response use apologetic or defensive language?", False),
+        ("Is the response under 150 words?", True),
+    ],
+    threshold=0.75,
+)
+```
+
+Score = fraction of criteria where the model's answer matches `expected_answer`.
+
+## GEval
+
+Holistic numeric scoring for qualities that don't decompose well into yes/no questions (creativity, tone, polish).
+
+```python
+from multivon_eval import GEval
+
+GEval(
+    name="writing_quality",
+    criteria="The response is engaging, concise, and professionally written.",
+    threshold=0.7,
+)
+```
+
+GEval is the only evaluator that uses a 0.0–1.0 numeric score directly from the judge rather than QAG aggregation. Use it sparingly.

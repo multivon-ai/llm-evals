@@ -1,0 +1,95 @@
+---
+title: Conversation Evaluators
+description: Evaluate multi-turn chat quality across an entire session.
+---
+
+Conversation evaluators assess quality across a full conversation, not just a single response. They use `case.conversation` — a list of `{"role", "content"}` message dicts.
+
+## Setting up a conversation case
+
+```python
+from multivon_eval import EvalCase
+
+case = EvalCase(
+    input="Help me plan a trip to Japan",
+    conversation=[
+        {"role": "user", "content": "I want to visit Japan in April"},
+        {"role": "assistant", "content": "April is perfect for cherry blossoms. What cities interest you?"},
+        {"role": "user", "content": "Tokyo and Kyoto"},
+        {"role": "assistant", "content": "Great choices. Tokyo for 4 days, Kyoto for 3 — here's an itinerary..."},
+        {"role": "user", "content": "What's my budget for this?"},
+        {"role": "assistant", "content": "For 7 days in Japan, budget around $150-250/day..."},
+    ],
+)
+```
+
+## ConversationRelevance
+
+Checks that each assistant response stays on topic relative to the conversation.
+
+```python
+from multivon_eval import ConversationRelevance
+
+ConversationRelevance()
+ConversationRelevance(threshold=0.8)
+```
+
+Catches assistants that go off-topic, bring up unrelated information, or lose the thread of the conversation.
+
+## KnowledgeRetention
+
+Checks that the assistant correctly recalls and applies information from earlier in the conversation.
+
+```python
+from multivon_eval import KnowledgeRetention
+
+KnowledgeRetention()
+```
+
+Example: if the user mentioned "I'm vegetarian" in turn 2, and the assistant recommends a steakhouse in turn 6, this fails.
+
+## ConversationCompleteness
+
+Checks that the conversation resolves the user's original goal.
+
+```python
+from multivon_eval import ConversationCompleteness
+
+ConversationCompleteness()
+ConversationCompleteness(threshold=0.9)
+```
+
+Useful for support bots and task-completion agents where you need to confirm the session actually delivered a result.
+
+## TurnConsistency
+
+Checks for contradictions between turns — the assistant shouldn't say one thing and then say the opposite later.
+
+```python
+from multivon_eval import TurnConsistency
+
+TurnConsistency()
+```
+
+Catches cases where the model's position drifts across a long session.
+
+## Full conversation eval example
+
+```python
+from multivon_eval import (
+    EvalSuite, EvalCase,
+    ConversationRelevance, KnowledgeRetention,
+    ConversationCompleteness, TurnConsistency,
+)
+
+suite = EvalSuite("Chatbot Eval")
+suite.add_cases(conversation_cases)
+suite.add_evaluators(
+    ConversationRelevance(),
+    KnowledgeRetention(),
+    ConversationCompleteness(threshold=0.85),
+    TurnConsistency(),
+)
+
+report = suite.run(my_chatbot_fn)
+```

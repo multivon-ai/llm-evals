@@ -1,0 +1,85 @@
+---
+title: Loading Datasets
+description: Load eval cases from JSONL and CSV files.
+---
+
+## JSONL
+
+Each line is a JSON object representing one `EvalCase`.
+
+```python
+from multivon_eval import load_jsonl
+
+cases = load_jsonl("cases.jsonl")
+```
+
+**cases.jsonl**
+```json
+{"input": "What is the capital of France?", "expected_output": "Paris", "tags": ["factual"]}
+{"input": "Summarize this article.", "context": "The article discusses...", "tags": ["summarization"]}
+{"input": "Is this review positive?", "expected_output": "yes", "metadata": {"source": "amazon"}}
+```
+
+Supported fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `input` | string | Required. The prompt sent to the model |
+| `expected_output` | string | For ExactMatch, Contains, BLEU, ROUGE |
+| `context` | string | For Faithfulness, Hallucination, Summarization |
+| `tags` | list[string] | For filtering and grouping in reports |
+| `metadata` | object | Arbitrary key-value data attached to results |
+
+## CSV
+
+```python
+from multivon_eval import load_csv
+
+cases = load_csv("cases.csv")
+```
+
+**cases.csv**
+```
+input,expected_output,context,tags
+What is 2+2?,4,,math
+Summarize this.,,Long text here...,summarization
+Is Paris in France?,yes,,factual geography
+```
+
+## Auto-detect format
+
+```python
+from multivon_eval import load
+
+cases = load("cases.jsonl")   # detects from extension
+cases = load("cases.csv")
+```
+
+## Filtering by tag
+
+```python
+cases = load("cases.jsonl")
+factual = [c for c in cases if "factual" in c.tags]
+
+suite.add_cases(factual)
+```
+
+## Building cases in code
+
+```python
+from multivon_eval import EvalCase
+
+cases = [
+    EvalCase(
+        input="What is the capital of France?",
+        expected_output="Paris",
+        tags=["factual", "geography"],
+        metadata={"difficulty": "easy"},
+    ),
+    EvalCase(
+        input="Explain how transformers work.",
+        context="Transformers use self-attention mechanisms...",
+        tags=["technical"],
+    ),
+]
+```

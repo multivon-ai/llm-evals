@@ -1,0 +1,136 @@
+---
+title: Agent Evaluators
+description: Evaluate tool use, planning, and task completion in agentic systems.
+---
+
+Agent evaluators work with `agent_trace` — a structured record of what your agent did. They're framework-agnostic: works with LangChain, LlamaIndex, CrewAI, or any custom agent.
+
+## Setting up an agent trace
+
+```python
+from multivon_eval import EvalCase, AgentStep, ToolCall
+
+case = EvalCase(
+    input="Search for recent AI papers and write a summary",
+    agent_trace=[
+        AgentStep(
+            thought="I need to search for recent papers first",
+            tool_calls=[
+                ToolCall(
+                    name="search",
+                    arguments={"query": "AI papers 2025"},
+                    result=["Paper A", "Paper B", "Paper C"],
+                )
+            ],
+        ),
+        AgentStep(
+            thought="Now I'll summarize what I found",
+            tool_calls=[ToolCall(name="summarize")],
+            output="Here are the key AI papers from 2025...",
+        ),
+    ],
+    expected_tool_calls=["search", "summarize"],
+)
+```
+
+## ToolCallAccuracy
+
+Checks that the agent called the expected tools. By default, order doesn't matter (set match).
+
+```python
+from multivon_eval import ToolCallAccuracy
+
+ToolCallAccuracy()                    # unordered set match
+ToolCallAccuracy(require_order=True)  # must match in exact order
+```
+
+Score = fraction of expected tools that were called.
+
+| `require_order=False` | Score |
+|-----------------------|-------|
+| All expected tools called | 1.0 |
+| Half expected tools called | 0.5 |
+| No expected tools called | 0.0 |
+
+When `require_order=True`, uses sequence alignment — partially correct order scores between 0 and 1.
+
+## ToolArgumentAccuracy
+
+LLM judge that evaluates whether the arguments passed to tools were appropriate and well-formed.
+
+```python
+from multivon_eval import ToolArgumentAccuracy
+
+ToolArgumentAccuracy()
+ToolArgumentAccuracy(threshold=0.8)
+```
+
+Looks at each tool call's arguments and judges whether they make sense for the task at hand.
+
+## PlanQuality
+
+LLM judge that evaluates the overall quality of the agent's plan — logic, completeness, and efficiency.
+
+```python
+from multivon_eval import PlanQuality
+
+PlanQuality()
+```
+
+Assesses:
+- Does the plan address the task?
+- Are the steps in a logical order?
+- Are there unnecessary or redundant steps?
+- Is anything missing?
+
+## TaskCompletion
+
+LLM judge that evaluates whether the agent's final output actually satisfies the original task.
+
+```python
+from multivon_eval import TaskCompletion
+
+TaskCompletion()
+TaskCompletion(threshold=0.9)
+```
+
+This is the end-to-end success metric — did the agent actually do what was asked?
+
+## StepFaithfulness
+
+LLM judge that checks whether each step follows logically from the prior steps and the original task.
+
+```python
+from multivon_eval import StepFaithfulness
+
+StepFaithfulness()
+```
+
+Catches agents that take unexpected detours or perform steps that contradict earlier observations.
+
+## Full agent eval example
+
+```python
+from multivon_eval import (
+    EvalSuite, EvalCase, AgentStep, ToolCall,
+    ToolCallAccuracy, ToolArgumentAccuracy,
+    PlanQuality, TaskCompletion,
+)
+
+def run_agent(task: str) -> str:
+    # Your agent here — returns final output
+    ...
+
+# Build traces from your agent framework
+# then wrap in EvalCase
+suite = EvalSuite("Agent Eval")
+suite.add_cases(cases)
+suite.add_evaluators(
+    ToolCallAccuracy(require_order=False),
+    ToolArgumentAccuracy(),
+    PlanQuality(),
+    TaskCompletion(threshold=0.85),
+)
+
+report = suite.run(run_agent)
+```

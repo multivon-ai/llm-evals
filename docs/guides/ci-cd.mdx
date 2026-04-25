@@ -1,0 +1,108 @@
+---
+title: CI/CD Integration
+description: Run evals as a quality gate in your deployment pipeline.
+---
+
+## The pattern
+
+Pass `fail_threshold` to `suite.run()`. If the pass rate drops below it, the process exits with code 1 — blocking the deployment.
+
+```python
+# eval.py
+from multivon_eval import EvalSuite, EvalCase, load, Faithfulness, NotEmpty
+
+suite = EvalSuite("Prod Eval")
+suite.add_cases(load("tests/cases.jsonl"))
+suite.add_evaluators(NotEmpty(), Faithfulness())
+
+report = suite.run(
+    model_fn=my_model,
+    fail_threshold=0.85,   # block deployment if < 85% pass
+    verbose=True,
+)
+
+report.save_json("eval_results.json")
+```
+
+## GitHub Actions
+
+```yaml
+# .github/workflows/eval.yml
+name: LLM Eval
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install multivon-eval
+
+      - name: Run evals
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python eval.py
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results
+          path: eval_results.json
+```
+
+## Speed up CI with parallel workers
+
+```python
+# Run 8 cases in parallel via threads
+report = suite.run(model_fn, workers=8, fail_threshold=0.85)
+```
+
+## Async runner for async model functions
+
+```python
+import asyncio
+from multivon_eval import EvalSuite
+
+async def my_async_model(input: str) -> str:
+    ...
+
+report = asyncio.run(
+    suite.run_async(my_async_model, concurrency=10, fail_threshold=0.85)
+)
+```
+
+## Save and view results
+
+```python
+report.save_json("results.json")
+report.save_csv("results.csv")
+```
+
+View a saved report from the CLI:
+
+```bash
+multivon-eval report results.json
+```
+
+## Run a specific eval file
+
+```bash
+multivon-eval run eval.py
+```
+
+## Tips
+
+- **Keep a golden dataset** — a small set of cases (20-50) that cover your most critical behaviors. Run these on every PR.
+- **Separate eval sets** — use tags to split fast deterministic evals (run on every commit) from slower LLM-judge evals (run nightly or on main only).
+- **Store results as artifacts** — track score trends over time by archiving `results.json` per run.

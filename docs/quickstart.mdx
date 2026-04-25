@@ -1,0 +1,137 @@
+---
+title: Quickstart
+description: Run your first eval in 5 minutes.
+---
+
+## Install
+
+```bash
+pip install multivon-eval
+```
+
+For LLM-judge evaluators, add your API key:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+# or
+export OPENAI_API_KEY=sk-...
+```
+
+## Write your first eval
+
+```python
+from multivon_eval import EvalSuite, EvalCase, NotEmpty, ExactMatch, Contains
+
+def my_model(input: str) -> str:
+    # Replace with your actual model call
+    return "The capital of France is Paris."
+
+suite = EvalSuite("My First Eval")
+
+suite.add_cases([
+    EvalCase(
+        input="What is the capital of France?",
+        expected_output="Paris",
+    ),
+    EvalCase(
+        input="Name two primary colors.",
+        expected_output="red and blue",
+    ),
+])
+
+suite.add_evaluators(
+    NotEmpty(),
+    ExactMatch(),
+    Contains(["Paris", "France"]),
+)
+
+report = suite.run(my_model, verbose=True)
+```
+
+Run it:
+
+```bash
+python eval.py
+```
+
+You'll see a terminal report:
+
+```
+────────────────── My First Eval ──────────────────
+  #  Input                  Output              Score  Status
+  1  What is the capital…   The capital of Fr…  1.00   PASS
+  2  Name two primary co…   Red and blue.       0.67   FAIL
+
+                     By Evaluator
+  Evaluator     Avg Score   Pass Rate
+  not_empty        1.00      100%
+  exact_match      0.50       50%
+  contains         0.83       83%
+
+╭──────────────── Summary ────────────────╮
+│ Total: 2   Passed: 1   Failed: 1       │
+╰─────────────────────────────────────────╯
+```
+
+## Add an LLM judge
+
+```python
+from multivon_eval import Faithfulness, Relevance
+
+suite.add_cases([
+    EvalCase(
+        input="Summarize this article.",
+        context="The article discusses climate change and its effects on polar ice...",
+    ),
+])
+
+suite.add_evaluators(
+    Faithfulness(),   # is the output grounded in context?
+    Relevance(),      # does it answer the question?
+)
+```
+
+## Load cases from a file
+
+```python
+from multivon_eval import load
+
+cases = load("cases.jsonl")  # or cases.csv
+suite.add_cases(cases)
+```
+
+**cases.jsonl**
+```json
+{"input": "What is 2+2?", "expected_output": "4"}
+{"input": "Summarize this.", "context": "Long article text here..."}
+```
+
+## Run in parallel
+
+```python
+report = suite.run(my_model, workers=8)
+```
+
+## Block CI on regression
+
+```python
+report = suite.run(my_model, fail_threshold=0.85)
+# exits with code 1 if pass rate < 85%
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Deterministic evaluators" href="/evaluators/deterministic">
+    All 11 built-in deterministic checks
+  </Card>
+  <Card title="LLM judge evaluators" href="/evaluators/llm-judge">
+    Faithfulness, hallucination, relevance, and more
+  </Card>
+  <Card title="Agent evaluation" href="/evaluators/agent">
+    Tool call accuracy and plan quality
+  </Card>
+  <Card title="CI/CD integration" href="/guides/ci-cd">
+    Run evals as a quality gate
+  </Card>
+</CardGroup>

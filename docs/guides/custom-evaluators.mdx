@@ -1,0 +1,109 @@
+---
+title: Custom Evaluators
+description: Build your own evaluators by extending the base class.
+---
+
+Every evaluator in multivon-eval inherits from `Evaluator`. You can build your own with a few lines.
+
+## The base class
+
+```python
+from multivon_eval.evaluators.base import Evaluator
+from multivon_eval.case import EvalCase
+from multivon_eval.result import EvalResult
+
+class MyEvaluator(Evaluator):
+    name = "my_evaluator"   # shown in reports
+
+    def evaluate(self, case: EvalCase, output: str) -> EvalResult:
+        # your logic here
+        score = 1.0  # between 0.0 and 1.0
+        reason = "Passed because..."
+        return self._result(score, reason)
+```
+
+`self._result(score, reason)` handles the threshold comparison and returns an `EvalResult`.
+
+## Example: sentence count
+
+```python
+class SentenceCount(Evaluator):
+    name = "sentence_count"
+
+    def __init__(self, min_sentences: int = 1, max_sentences: int = 10, threshold: float = 1.0):
+        super().__init__(threshold)
+        self.min_sentences = min_sentences
+        self.max_sentences = max_sentences
+
+    def evaluate(self, case: EvalCase, output: str) -> EvalResult:
+        count = output.count(".") + output.count("!") + output.count("?")
+        in_range = self.min_sentences <= count <= self.max_sentences
+        return self._result(
+            1.0 if in_range else 0.0,
+            f"{count} sentences (expected {self.min_sentences}-{self.max_sentences})",
+        )
+```
+
+## Example: LLM-based custom check
+
+```python
+import anthropic
+from multivon_eval.evaluators.base import Evaluator
+
+class ToneCheck(Evaluator):
+    name = "tone_check"
+
+    def __init__(self, expected_tone: str, threshold: float = 1.0):
+        super().__init__(threshold)
+        self.expected_tone = expected_tone
+        self.client = anthropic.Anthropic()
+
+    def evaluate(self, case: EvalCase, output: str) -> EvalResult:
+        response = self.client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=10,
+            messages=[{
+                "role": "user",
+                "content": f"Is the following text {self.expected_tone} in tone? Answer only yes or no.\n\n{output}"
+            }]
+        )
+        answer = response.content[0].text.strip().lower()
+        passed = answer.startswith("yes")
+        return self._result(
+            1.0 if passed else 0.0,
+            f"Tone is {'correct' if passed else 'incorrect'} ({self.expected_tone})",
+        )
+```
+
+Use it:
+
+```python
+suite.add_evaluators(
+    ToneCheck("professional and friendly"),
+    ToneCheck("concise"),
+)
+```
+
+## EvalResult fields
+
+```python
+@dataclass
+class EvalResult:
+    evaluator: str      # evaluator name
+    score: float        # 0.0 to 1.0
+    passed: bool        # score >= threshold
+    reason: str         # human-readable explanation
+```
+
+## Accessing case fields
+
+```python
+def evaluate(self, case: EvalCase, output: str) -> EvalResult:
+    case.input           # the original prompt
+    case.expected_output # ground truth (may be None)
+    case.context         # retrieved context (may be None)
+    case.agent_trace     # list[AgentStep] (may be None)
+    case.conversation    # list[dict] (may be None)
+    case.tags            # list[str]
+    case.metadata        # dict
+```
