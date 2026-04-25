@@ -40,7 +40,7 @@ dev = [
 [project.urls]
 Homepage = "https://multivon.ai"
 Repository = "https://github.com/multivon-ai/multivon-eval"
-Documentation = "https://github.com/multivon-ai/multivon-eval#readme"
+Documentation = "https://evaldocs.multivon.ai"
 "Bug Tracker" = "https://github.com/multivon-ai/multivon-eval/issues"
 
 [project.scripts]

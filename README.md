@@ -4,7 +4,7 @@
 ![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)
 ![PyPI](https://img.shields.io/pypi/v/multivon-eval.svg)
 
-**[Documentation](https://docs.multivon.ai)** · [Website](https://multivon.ai) · [PyPI](https://pypi.org/project/multivon-eval)
+**[Documentation](https://evaldocs.multivon.ai)** · [Website](https://multivon.ai) · [PyPI](https://pypi.org/project/multivon-eval)
 
 **AI evaluation for teams that ship models to production.**
 
