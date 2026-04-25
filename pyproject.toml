@@ -39,9 +39,9 @@ dev = [
 
 [project.urls]
 Homepage = "https://multivon.ai"
-Repository = "https://github.com/multivon-ai/llm-evals"
-Documentation = "https://github.com/multivon-ai/llm-evals#readme"
-"Bug Tracker" = "https://github.com/multivon-ai/llm-evals/issues"
+Repository = "https://github.com/multivon-ai/multivon-eval"
+Documentation = "https://github.com/multivon-ai/multivon-eval#readme"
+"Bug Tracker" = "https://github.com/multivon-ai/multivon-eval/issues"
 
 [project.scripts]
 multivon-eval = "multivon_eval.cli:main"

@@ -338,7 +338,7 @@ Issues and PRs welcome.
 **Large changes** (new evaluators, architecture): open an issue first.
 
 ```bash
-git clone https://github.com/multivon-ai/llm-evals
+git clone https://github.com/multivon-ai/multivon-eval
 cd llm-evals
 pip install -e ".[dev]"
 pytest tests/
