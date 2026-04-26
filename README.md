@@ -49,8 +49,8 @@ report = suite.run(my_model_fn)
 Every team building AI products hits the same problem: **how do you know if your model is getting better or worse?**
 
 Existing tools have real limitations:
-- **DeepEval** — powerful but LLM-as-judge for everything is expensive, slow, and hard to audit
-- **RAGAS** — excellent, but RAG-only
+- **DeepEval** — strong metric library, but every metric requires an external LLM call and the best features are tied to the Confident AI platform
+- **RAGAS** — excellent RAG-specific metrics; thinner coverage outside retrieval pipelines
 - **Promptfoo** — YAML-driven, feels rigid for Python teams
 
 `multivon-eval` is different:
