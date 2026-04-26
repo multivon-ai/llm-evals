@@ -145,6 +145,226 @@ class EvalSuite:
                     )
         return [results[i] for i in range(len(self._cases))]
 
+    # ── Factory suites ────────────────────────────────────────────────────────
+
+    @classmethod
+    def for_rag(cls, name: str = "RAG Eval", *, threshold: float = 0.85) -> "EvalSuite":
+        """Faithfulness, hallucination, context precision/recall, relevance.
+
+        Best for: RAG pipelines, question-answering systems, retrieval-augmented chatbots.
+
+        Usage:
+            suite = EvalSuite.for_rag()
+            suite.add_cases(cases)
+            report = suite.run(my_rag_fn, runs=5)
+        """
+        from .evaluators.deterministic import NotEmpty
+        from .evaluators.llm_judge import (
+            Faithfulness, Hallucination, Relevance,
+            ContextPrecision, ContextRecall,
+        )
+        return (
+            cls(name)
+            .add_evaluators(
+                NotEmpty(),
+                Faithfulness(threshold=threshold),
+                Hallucination(threshold=threshold),
+                ContextPrecision(threshold=threshold),
+                ContextRecall(threshold=threshold),
+                Relevance(threshold=threshold),
+            )
+        )
+
+    @classmethod
+    def for_agents(cls, name: str = "Agent Eval", *, require_order: bool = False) -> "EvalSuite":
+        """Tool call accuracy, necessity, trajectory efficiency, plan quality, task completion.
+
+        Best for: LLM agents, tool-augmented systems, multi-step pipelines.
+        Run with runs=5 to detect flaky cases: suite.run(fn, runs=5)
+
+        Usage:
+            suite = EvalSuite.for_agents()
+            suite.add_cases(cases)
+            report = suite.run(my_agent_fn, runs=5)
+        """
+        from .evaluators.agent import (
+            ToolCallAccuracy, ToolCallNecessity, TrajectoryEfficiency,
+            PlanQuality, TaskCompletion,
+        )
+        return (
+            cls(name)
+            .add_evaluators(
+                ToolCallAccuracy(require_order=require_order),
+                ToolCallNecessity(),
+                TrajectoryEfficiency(),
+                PlanQuality(),
+                TaskCompletion(),
+            )
+        )
+
+    @classmethod
+    def for_support_bot(cls, name: str = "Support Bot Eval") -> "EvalSuite":
+        """Faithfulness, relevance, coherence, toxicity, not-empty.
+
+        Best for: Customer support bots, help desks, FAQ systems.
+
+        Usage:
+            suite = EvalSuite.for_support_bot()
+            suite.add_cases(cases)
+            report = suite.run(my_bot_fn)
+        """
+        from .evaluators.deterministic import NotEmpty
+        from .evaluators.llm_judge import Faithfulness, Relevance, Coherence, Toxicity
+        return (
+            cls(name)
+            .add_evaluators(
+                NotEmpty(),
+                Faithfulness(),
+                Relevance(),
+                Coherence(),
+                Toxicity(),
+            )
+        )
+
+    @classmethod
+    def for_summarization(cls, name: str = "Summarization Eval") -> "EvalSuite":
+        """Faithfulness, coherence, relevance, summarization quality.
+
+        Best for: Document summarizers, meeting note takers, digest generators.
+
+        Usage:
+            suite = EvalSuite.for_summarization()
+            suite.add_cases(cases)
+            report = suite.run(my_summarizer_fn)
+        """
+        from .evaluators.deterministic import NotEmpty
+        from .evaluators.llm_judge import Faithfulness, Coherence, Relevance, Summarization
+        return (
+            cls(name)
+            .add_evaluators(
+                NotEmpty(),
+                Faithfulness(),
+                Coherence(),
+                Relevance(),
+                Summarization(),
+            )
+        )
+
+    @classmethod
+    def for_document_intelligence(
+        cls,
+        name: str = "Document Intelligence Eval",
+        schema=None,
+    ) -> "EvalSuite":
+        """Schema validation, faithfulness, answer accuracy.
+
+        Best for: Data extraction, document parsing, structured output pipelines.
+        Pass a Pydantic model or JSON Schema dict as `schema` to validate output structure.
+
+        Usage:
+            from pydantic import BaseModel
+            class Invoice(BaseModel):
+                vendor: str
+                amount: float
+                date: str
+
+            suite = EvalSuite.for_document_intelligence(schema=Invoice)
+            suite.add_cases(cases)
+            report = suite.run(my_extractor_fn)
+        """
+        from .evaluators.deterministic import NotEmpty
+        from .evaluators.llm_judge import Faithfulness, AnswerAccuracy
+        from .evaluators.compliance import SchemaEvaluator
+        suite = cls(name).add_evaluators(NotEmpty(), Faithfulness(), AnswerAccuracy())
+        if schema is not None:
+            suite.add_evaluator(SchemaEvaluator(schema))
+        return suite
+
+    @classmethod
+    def for_regulated(
+        cls,
+        name: str = "Regulated AI Eval",
+        *,
+        jurisdiction: str = "hipaa",
+        schema=None,
+    ) -> "EvalSuite":
+        """PII detection, schema validation, faithfulness — zero data egress.
+
+        Best for: Healthcare, finance, legal, and public sector AI systems
+        subject to HIPAA, GDPR, CCPA, EU AI Act, or NIST AI RMF requirements.
+
+        Pair with ComplianceReporter to produce tamper-evident audit trails:
+            reporter = ComplianceReporter("/audit/evals", framework="eu_ai_act")
+            reporter.record(report, tags={"system": "triage-bot", "version": "1.0"})
+
+        Usage:
+            suite = EvalSuite.for_regulated(jurisdiction="hipaa")
+            suite.add_cases(cases)
+            report = suite.run(my_fn)
+        """
+        from .evaluators.deterministic import NotEmpty
+        from .evaluators.llm_judge import Faithfulness, Relevance
+        from .evaluators.compliance import PIIEvaluator, SchemaEvaluator
+        suite = (
+            cls(name)
+            .add_evaluators(
+                PIIEvaluator(jurisdiction=jurisdiction, redact=True),
+                NotEmpty(),
+                Faithfulness(),
+                Relevance(),
+            )
+        )
+        if schema is not None:
+            suite.add_evaluator(SchemaEvaluator(schema, strict=True))
+        return suite
+
+    @classmethod
+    def for_chatbot(cls, name: str = "Chatbot Eval") -> "EvalSuite":
+        """Conversation relevance, knowledge retention, turn consistency, completeness.
+
+        Best for: Multi-turn chatbots, conversational assistants, dialogue systems.
+
+        Usage:
+            suite = EvalSuite.for_chatbot()
+            suite.add_cases(cases)
+            report = suite.run(my_chatbot_fn)
+        """
+        from .evaluators.conversation import (
+            ConversationRelevance, KnowledgeRetention,
+            ConversationCompleteness, TurnConsistency,
+        )
+        return (
+            cls(name)
+            .add_evaluators(
+                ConversationRelevance(),
+                KnowledgeRetention(),
+                TurnConsistency(),
+                ConversationCompleteness(),
+            )
+        )
+
+    @classmethod
+    def for_classification(cls, name: str = "Classification Eval") -> "EvalSuite":
+        """Exact match and answer accuracy for label prediction tasks.
+
+        Best for: Intent classification, sentiment analysis, routing, tagging.
+
+        Usage:
+            suite = EvalSuite.for_classification()
+            suite.add_cases(cases)
+            report = suite.run(my_classifier_fn)
+        """
+        from .evaluators.deterministic import NotEmpty, ExactMatch
+        from .evaluators.llm_judge import AnswerAccuracy
+        return (
+            cls(name)
+            .add_evaluators(
+                NotEmpty(),
+                ExactMatch(),
+                AnswerAccuracy(),
+            )
+        )
+
     async def run_async(
         self,
         model_fn: Callable[[str], Awaitable[str]],

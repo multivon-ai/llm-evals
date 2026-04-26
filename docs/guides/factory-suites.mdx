@@ -1,0 +1,192 @@
+---
+title: Factory Suites
+description: Pre-configured eval suites by use case — no evaluator selection needed.
+---
+
+Factory suites are pre-configured `EvalSuite` instances with the right evaluators for common use cases. One line to get started; fully customizable from there.
+
+```python
+suite = EvalSuite.for_rag()
+suite.add_cases(cases)
+report = suite.run(my_pipeline)
+```
+
+Every factory suite returns a standard `EvalSuite` — you can add more evaluators, override thresholds, or call `.run()` with `runs=N`, `workers=N`, or `fail_threshold=0.85` exactly as you would with a manually configured suite.
+
+---
+
+## Available suites
+
+| Factory | Evaluators included | Best for |
+|---------|-------------------|----------|
+| `for_rag()` | NotEmpty, Faithfulness, Hallucination, ContextPrecision, ContextRecall, Relevance | RAG pipelines, QA systems |
+| `for_agents()` | ToolCallAccuracy, ToolCallNecessity, TrajectoryEfficiency, PlanQuality, TaskCompletion | LLM agents, tool-use systems |
+| `for_support_bot()` | NotEmpty, Faithfulness, Relevance, Coherence, Toxicity | Customer support, help desks |
+| `for_summarization()` | NotEmpty, Faithfulness, Coherence, Relevance, Summarization | Document summarizers, digests |
+| `for_document_intelligence()` | NotEmpty, Faithfulness, AnswerAccuracy (+ SchemaEvaluator if `schema` provided) | Data extraction, structured output |
+| `for_regulated()` | PIIEvaluator, NotEmpty, Faithfulness, Relevance (+ SchemaEvaluator if `schema` provided) | Healthcare, finance, legal, government |
+| `for_chatbot()` | ConversationRelevance, KnowledgeRetention, TurnConsistency, ConversationCompleteness | Multi-turn chatbots, dialogue systems |
+| `for_classification()` | NotEmpty, ExactMatch, AnswerAccuracy | Intent classification, tagging, routing |
+
+---
+
+## EvalSuite.for_rag()
+
+```python
+suite = EvalSuite.for_rag()
+suite = EvalSuite.for_rag("My RAG Eval", threshold=0.80)
+```
+
+**Parameters:**
+- `name` — suite name (default `"RAG Eval"`)
+- `threshold` — pass threshold applied to all evaluators (default `0.85`)
+
+**When to use:** Any pipeline that retrieves context chunks and generates answers from them. Evaluates both the retrieval quality (ContextPrecision, ContextRecall) and the generation quality (Faithfulness, Hallucination, Relevance).
+
+```python
+suite = EvalSuite.for_rag(threshold=0.80)
+suite.add_cases(cases)
+report = suite.run(my_rag_pipeline, runs=5)  # multi-run for flakiness detection
+```
+
+---
+
+## EvalSuite.for_agents()
+
+```python
+suite = EvalSuite.for_agents()
+suite = EvalSuite.for_agents("Coding Agent", require_order=True)
+```
+
+**Parameters:**
+- `name` — suite name (default `"Agent Eval"`)
+- `require_order` — passed to `ToolCallAccuracy`; if `True`, tool call order must match expected (default `False`)
+
+**When to use:** Any LLM system that makes tool calls or takes multi-step actions. Evaluates whether the agent called the right tools, whether tool calls were necessary, and whether the trajectory was efficient.
+
+```python
+suite = EvalSuite.for_agents()
+suite.add_cases(cases)
+# Run 5 times per case — agent tasks are non-deterministic
+report = suite.run(my_agent, runs=5)
+```
+
+---
+
+## EvalSuite.for_support_bot()
+
+```python
+suite = EvalSuite.for_support_bot()
+suite = EvalSuite.for_support_bot("Tier 1 Support Bot")
+```
+
+**When to use:** Customer support, help desks, FAQ bots. Checks that responses are non-empty, faithful to the knowledge base, relevant to the question, coherent, and non-toxic.
+
+---
+
+## EvalSuite.for_summarization()
+
+```python
+suite = EvalSuite.for_summarization()
+```
+
+**When to use:** Document summarizers, meeting note takers, digest generators. Note that `Faithfulness` here checks whether the summary introduces claims not in the source — for long documents, use with cases that include the source document as `context`.
+
+---
+
+## EvalSuite.for_document_intelligence()
+
+```python
+from pydantic import BaseModel
+
+class Invoice(BaseModel):
+    vendor: str
+    amount: float
+    date: str
+
+suite = EvalSuite.for_document_intelligence(schema=Invoice)
+suite.add_cases(cases)
+report = suite.run(my_extractor)
+```
+
+**Parameters:**
+- `name` — suite name (default `"Document Intelligence Eval"`)
+- `schema` — optional Pydantic model class or JSON Schema dict. If provided, `SchemaEvaluator` is added as the first evaluator — structure is checked before content.
+
+**When to use:** Data extraction pipelines, document parsers, any system that produces structured JSON output. The `schema` parameter is the key differentiator: it separates parse failures from semantic failures.
+
+---
+
+## EvalSuite.for_regulated()
+
+```python
+suite = EvalSuite.for_regulated(jurisdiction="hipaa")
+suite = EvalSuite.for_regulated(jurisdiction="gdpr", schema=MyOutputModel)
+```
+
+**Parameters:**
+- `name` — suite name (default `"Regulated AI Eval"`)
+- `jurisdiction` — passed to `PIIEvaluator`: `"hipaa"`, `"gdpr"`, `"ccpa"`, `"pipeda"`, or `"all"` (default `"hipaa"`)
+- `schema` — optional Pydantic model or JSON Schema. If provided, `SchemaEvaluator(strict=True)` is added.
+
+**When to use:** Any AI system subject to data privacy regulations. `PIIEvaluator` runs locally — no data leaves your environment. Pair with `ComplianceReporter` to generate audit trails:
+
+```python
+from multivon_eval import EvalSuite, ComplianceReporter
+
+suite = EvalSuite.for_regulated(jurisdiction="hipaa")
+suite.add_cases(cases)
+report = suite.run(my_clinical_fn)
+
+reporter = ComplianceReporter("/audit/evals", framework="eu_ai_act")
+reporter.record(report, tags={"system": "triage-bot", "version": "2.1.0"})
+```
+
+---
+
+## EvalSuite.for_chatbot()
+
+```python
+suite = EvalSuite.for_chatbot()
+```
+
+**When to use:** Multi-turn conversational systems. Evaluates whether responses stay relevant across turns, whether facts introduced early in the conversation are retained, and whether the conversation reaches a complete resolution.
+
+Cases for chatbot evaluation should use `EvalCase` with a `conversation` field (list of prior turns) rather than a single `input`.
+
+---
+
+## EvalSuite.for_classification()
+
+```python
+suite = EvalSuite.for_classification("Intent Classifier")
+```
+
+**When to use:** Label prediction tasks — intent classification, sentiment analysis, topic tagging, routing decisions. Cases should set `expected_output` to the correct label.
+
+---
+
+## Customizing a factory suite
+
+All factory methods return a standard `EvalSuite`. You can add evaluators, adjust existing ones, or swap the name:
+
+```python
+from multivon_eval import EvalSuite, Bias, PIIEvaluator
+
+# Start from RAG defaults, add bias and PII checking
+suite = EvalSuite.for_rag("Healthcare RAG")
+suite.add_evaluators(Bias(), PIIEvaluator(jurisdiction="hipaa"))
+report = suite.run(my_pipeline, runs=5)
+```
+
+---
+
+## Future improvements
+
+Factory suites will expand in upcoming versions:
+- Domain-specific evaluators (medical, legal, financial)
+- Thresholds calibrated by industry benchmarks
+- `EvalSuite.for_coding()` for code generation systems
+- Multi-modal evaluation (vision + text)
+
+See [GitHub discussions](https://github.com/multivon-ai/multivon-eval/discussions) to request specific use cases.
