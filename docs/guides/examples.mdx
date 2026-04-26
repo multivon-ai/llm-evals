@@ -3,7 +3,7 @@ title: Real-World Examples
 description: End-to-end walkthroughs for support bots, RAG pipelines, and coding agents.
 ---
 
-Three concrete use cases showing what an eval looks like from setup to CI block.
+Seven concrete use cases showing what an eval looks like from setup to CI block.
 
 ## Support Bot
 
@@ -136,6 +136,484 @@ Stability: 40%   Flaky: 3
 ```
 
 The fix: add retry logic with exponential backoff to the Slack and Calendar tool wrappers. After the fix, re-run with `runs=5` — stability goes to 100%.
+
+---
+
+## Multi-Run + Flakiness Detection
+
+**Scenario:** A summarization model is non-deterministic. Most of the time it stays faithful to the source document, but sometimes it adds details that were never in the text. You want to run each case 5 times, flag flaky summaries, and compare a prompt change with statistical significance before you ship the update.
+
+```python
+import random
+
+from multivon_eval import EvalCase, EvalSuite, Experiment
+
+cases = [
+    EvalCase(
+        input="Summarize the weekly product update.",
+        context=(
+            "This week the mobile team shipped a new onboarding flow, fixed two crash bugs, "
+            "and delayed analytics export until next week."
+        ),
+    ),
+    EvalCase(
+        input="Summarize the finance memo.",
+        context=(
+            "Finance held the 2026 hiring plan flat, reduced travel by 12%, "
+            "and approved a new vendor review process."
+        ),
+    ),
+    EvalCase(
+        input="Summarize the incident review.",
+        context=(
+            "The API outage lasted 14 minutes, the root cause was an expired TLS certificate, "
+            "and the team added automated certificate rotation."
+        ),
+    ),
+]
+
+summary_options_v1 = {
+    "Summarize the weekly product update.": [
+        "The team shipped a new onboarding flow, fixed two crash bugs, and delayed analytics export until next week.",
+        "The team shipped a new onboarding flow, fixed two crash bugs, and launched analytics export worldwide.",
+    ],
+    "Summarize the finance memo.": [
+        "Finance kept the 2026 hiring plan flat, cut travel by 12%, and approved a vendor review process.",
+        "Finance expanded hiring by 12%, increased travel, and approved a vendor review process.",
+    ],
+    "Summarize the incident review.": [
+        "The outage lasted 14 minutes, came from an expired TLS certificate, and led to automated certificate rotation.",
+        "The outage lasted 14 minutes, was caused by a database failover, and led to automated certificate rotation.",
+    ],
+}
+
+summary_options_v2 = {
+    "Summarize the weekly product update.": [
+        "The team shipped a new onboarding flow, fixed two crash bugs, and delayed analytics export until next week.",
+        "This week's update focused on onboarding improvements, crash fixes, and delaying analytics export until next week.",
+    ],
+    "Summarize the finance memo.": [
+        "Finance kept the 2026 hiring plan flat, cut travel by 12%, and approved a vendor review process.",
+        "The memo says hiring stays flat for 2026, travel drops by 12%, and vendor review is now required.",
+    ],
+    "Summarize the incident review.": [
+        "The outage lasted 14 minutes, came from an expired TLS certificate, and led to automated certificate rotation.",
+        "The review says a 14-minute outage was traced to an expired TLS certificate and prevented with certificate rotation.",
+    ],
+}
+
+def summarizer_v1(prompt: str) -> str:
+    return random.choice(summary_options_v1[prompt])
+
+def summarizer_v2(prompt: str) -> str:
+    return random.choice(summary_options_v2[prompt])
+
+suite = EvalSuite.for_summarization("Summarizer Stability Eval")
+suite.add_cases(cases)
+
+exp = Experiment("summarizer-prompt-change")
+
+report_v1 = suite.run(summarizer_v1, runs=5, verbose=True)
+run_v1 = exp.record(report_v1, tags={"prompt_version": "before", "temperature": "0.7"})
+
+print(f"Flaky cases: {report_v1.flaky_count}")
+print(f"Stability: {report_v1.stability_score:.0%}")
+for case_result in report_v1.case_results:
+    if case_result.is_flaky:
+        print(
+            f"  FLAKY: {case_result.case_input} "
+            f"({case_result.pass_count}/{case_result.runs} runs passed)"
+        )
+
+report_v2 = suite.run(summarizer_v2, runs=5, verbose=True)
+run_v2 = exp.record(report_v2, tags={"prompt_version": "after", "temperature": "0.2"})
+
+exp.compare(run_v1, run_v2)
+```
+
+**Output:**
+```text
+⚠ 2 flaky case(s) — passed inconsistently across 5 runs:
+  • 'Summarize the finance memo.'        (3/5 runs passed)
+  • 'Summarize the incident review.'     (4/5 runs passed)
+
+Flaky cases: 2
+Stability: 33%
+  FLAKY: Summarize the finance memo. (3/5 runs passed)
+  FLAKY: Summarize the incident review. (4/5 runs passed)
+
+Pass rate                  33.3%  →  100.0%       ↑   +0.6667
+Flaky cases                     2  →  0
+Stability                  0.3333  →  1.0000      ↑   +0.6667
+
+Statistical significance: p=0.02 ✦ significant
+Verdict: IMPROVED — pass rate up +66.7%
+```
+
+**What to look for:** `runs=5` surfaces cases that would look fine on a lucky single run. The `FLAKY` lines show exactly which prompts are unstable, and `exp.compare()` tells you whether the prompt change fixed a real regression or just moved noise around.
+
+---
+
+## Document Intelligence with Schema Validation
+
+**Scenario:** An invoice extractor should return JSON that matches a strict schema. Most invoices parse correctly, but one layout occasionally causes malformed JSON. You want schema validation to catch the bad output immediately so you can separate parsing failures from downstream faithfulness issues.
+
+```python
+from pydantic import BaseModel
+
+from multivon_eval import EvalCase, EvalSuite
+
+
+class LineItem(BaseModel):
+    description: str
+    quantity: int
+    unit_price: float
+
+
+class Invoice(BaseModel):
+    vendor: str
+    amount: float
+    date: str
+    line_items: list[LineItem]
+
+
+cases = [
+    EvalCase(
+        input=(
+            "Extract this invoice as JSON.\n"
+            "Vendor: Northwind Supplies\n"
+            "Invoice Date: 2026-04-18\n"
+            "Line Items:\n"
+            "- Ergonomic keyboard | qty 2 | unit price 79.50\n"
+            "- Wireless mouse | qty 3 | unit price 34.00\n"
+            "Total: 261.00"
+        ),
+        context=(
+            "Vendor: Northwind Supplies. Invoice Date: 2026-04-18. "
+            "Items: 2 ergonomic keyboards at 79.50, 3 wireless mice at 34.00. Total: 261.00."
+        ),
+    ),
+    EvalCase(
+        input=(
+            "Extract this invoice as JSON.\n"
+            "Vendor: Bluebird Logistics\n"
+            "Invoice Date: 2026-04-19\n"
+            "Line Items:\n"
+            "- Freight charge | qty 1 | unit price 980.00\n"
+            "- Fuel surcharge | qty 1 | unit price 45.00\n"
+            "Total: 1025.00"
+        ),
+        context=(
+            "Vendor: Bluebird Logistics. Invoice Date: 2026-04-19. "
+            "Items: freight charge 980.00 and fuel surcharge 45.00. Total: 1025.00."
+        ),
+    ),
+]
+
+
+def extract_invoice(prompt: str) -> str:
+    if "Northwind Supplies" in prompt:
+        return """
+        {
+          "vendor": "Northwind Supplies",
+          "amount": 261.0,
+          "date": "2026-04-18",
+          "line_items": [
+            {"description": "Ergonomic keyboard", "quantity": 2, "unit_price": 79.5},
+            {"description": "Wireless mouse", "quantity": 3, "unit_price": 34.0}
+          ]
+        }
+        """.strip()
+
+    return """
+    {
+      "vendor": "Bluebird Logistics",
+      "amount": 1025.0,
+      "date": "2026-04-19",
+      "line_items": [
+        {"description": "Freight charge", "quantity": 1, "unit_price": 980.0},
+        {"description": "Fuel surcharge", "quantity": 1, "unit_price": 45.0}
+      ]
+    """.strip()
+
+
+suite = EvalSuite.for_document_intelligence("Invoice Extraction Eval", schema=Invoice)
+suite.add_cases(cases)
+
+report = suite.run(extract_invoice, verbose=True)
+
+for case_result in report.case_results:
+    schema_result = next(
+        result for result in case_result.results if result.evaluator == "schema_compliance"
+    )
+    print(f"\nCase: {case_result.case_input.splitlines()[1]}")
+    if not schema_result.passed:
+        print("schema_compliance: FAIL")
+        print(schema_result.reason)
+        print("faithfulness: skipped in triage until the JSON is valid")
+        continue
+
+    faithfulness_result = next(
+        result for result in case_result.results if result.evaluator == "faithfulness"
+    )
+    print("schema_compliance: PASS")
+    print(f"faithfulness: {'PASS' if faithfulness_result.passed else 'FAIL'}")
+```
+
+**Output:**
+```text
+Case: Vendor: Northwind Supplies
+schema_compliance: PASS
+faithfulness: PASS
+
+Case: Vendor: Bluebird Logistics
+schema_compliance: FAIL
+Invalid JSON: Expecting ',' delimiter: line 8 column 5 (char 252)
+faithfulness: skipped in triage until the JSON is valid
+```
+
+**What to look for:** The malformed invoice fails at `schema_compliance` with a concrete JSON parse error, so you can fix formatting before investigating semantic extraction quality. This keeps parse bugs, schema drift, and faithfulness errors from getting mixed together in the same debugging pass.
+
+---
+
+## Regulated AI (HIPAA)
+
+**Scenario:** A clinical triage assistant drafts intake summaries for a nurse review queue. The content still needs to be medically useful, but it also cannot leak regulated identifiers. You want HIPAA-specific PII checks, an audit trail for every run, and tamper-evident records you can hand to compliance.
+
+```python
+from pathlib import Path
+
+from multivon_eval import ComplianceReporter, EvalCase, EvalSuite
+
+cases = [
+    EvalCase(
+        input=(
+            "Draft a triage summary for a patient with chest tightness after climbing stairs. "
+            "Keep it brief and do not include identifiers."
+        ),
+        context=(
+            "Symptoms: chest tightness after exertion for two days, mild shortness of breath, "
+            "no fever, no syncope. Escalate if symptoms worsen."
+        ),
+    ),
+    EvalCase(
+        input=(
+            "Draft a triage summary for a patient reporting dizziness after missing meals. "
+            "Keep it brief and do not include identifiers."
+        ),
+        context=(
+            "Symptoms: intermittent dizziness, likely dehydration, encourage fluids, "
+            "same-day follow-up if symptoms persist."
+        ),
+    ),
+]
+
+
+def triage_assistant(prompt: str) -> str:
+    if "chest tightness" in prompt:
+        return (
+            "Escalate for same-day nurse review because the patient has exertional chest tightness "
+            "with mild shortness of breath and should be evaluated if symptoms worsen."
+        )
+    return (
+        "Likely dehydration-related dizziness after missed meals; encourage fluids and same-day follow-up "
+        "if symptoms persist. Patient MRN 4487612 was included in the referral note."
+    )
+
+
+suite = EvalSuite.for_regulated("HIPAA Triage Eval", jurisdiction="hipaa")
+suite.model_id = "triage-assistant-v2"
+suite.add_cases(cases)
+
+report = suite.run(triage_assistant, verbose=True)
+
+for case_result in report.case_results:
+    pii_result = next(result for result in case_result.results if result.evaluator == "pii_detection")
+    if not pii_result.passed:
+        print(f"\nPII failure for: {case_result.case_input[:60]}...")
+        print(pii_result.reason)
+
+reporter = ComplianceReporter(output_dir="./audit-logs", framework="eu-ai-act")
+record_id = reporter.record(
+    report,
+    tags={"system": "triage-assistant", "release": "2026-04-26"},
+)
+
+audit_log = Path("./audit-logs/HIPAA_Triage_Eval.audit.ndjson")
+hash_log = Path("./audit-logs/HIPAA_Triage_Eval.audit.sha256")
+
+print(f"\nrecord_id={record_id}")
+print(audit_log.read_text().splitlines()[-1])
+print(hash_log.read_text().splitlines()[-1])
+```
+
+**Output:**
+```text
+PII failure for: Draft a triage summary for a patient reporting dizziness...
+PII detected (1 type(s)):
+  mrn: "[REDACTED-MRN]"
+
+[compliance] audit record → a3f9b2c1ef20  (HIPAA_Triage_Eval.audit.ndjson)
+[compliance] framework: eu-ai-act
+
+{"record_id":"a3f9b2c1ef20","suite_name":"HIPAA Triage Eval","model_id":"triage-assistant-v2","timestamp":"2026-04-26T19:42:11.821000+00:00","framework":"eu-ai-act","summary":{"total":2,"passed":1,"failed":1,"pass_rate":0.5,"avg_score":0.875,"runs_per_case":1,"flaky_count":0,"stability_score":1.0,"tags":{"system":"triage-assistant","release":"2026-04-26"}},"evaluator_results":[{"evaluator":"pii_detection","avg_score":0.5,"pass_rate":0.5,"control":"Article 9(4)(b) — Privacy & data governance"},{"evaluator":"not_empty","avg_score":1.0,"pass_rate":1.0,"control":"Article 9(4)(c) — Robustness & output consistency"},{"evaluator":"faithfulness","avg_score":1.0,"pass_rate":1.0,"control":"Article 9(4)(a) — Accuracy & reliability"},{"evaluator":"relevance","avg_score":1.0,"pass_rate":1.0,"control":"Article 9(4)(a) — Accuracy & reliability"}],"record_hash":"f7d6fd7d6d42d6f0c2d0d8049fa6dbe5815ff730c7adf82f3f5f4c6a72fc56f9"}
+f7d6fd7d6d42d6f0c2d0d8049fa6dbe5815ff730c7adf82f3f5f4c6a72fc56f9  a3f9b2c1ef20  2026-04-26T19:42:11.821000+00:00
+```
+
+**What to look for:** `PIIEvaluator` flags the leaked MRN before the response reaches production, and the redacted reason is safe to store in logs. `ComplianceReporter` then writes an append-only NDJSON record plus a SHA-256 hash line, giving you both a human-readable audit trail and a tamper check.
+
+---
+
+## CI/CD Quality Gate
+
+**Scenario:** You want GitHub Actions to block pull requests when model quality regresses. Some checks should fail immediately via `fail_threshold`, some should use direct assertions on pass rate, and one should compare the current run to last week's baseline before merge.
+
+```python
+# tests/test_model_quality.py
+import os
+from pathlib import Path
+
+from multivon_eval import EvalCase, EvalSuite, Experiment
+
+
+CASES = [
+    EvalCase(
+        input="Summarize the release note.",
+        context="The release shipped SSO support, fixed an auth timeout bug, and removed legacy CSV export.",
+    ),
+    EvalCase(
+        input="Summarize the support update.",
+        context="Support added Sunday coverage for enterprise customers and published a new escalation runbook.",
+    ),
+    EvalCase(
+        input="Summarize the incident report.",
+        context="A cache eviction bug caused a 9-minute outage before the rollback completed successfully.",
+    ),
+]
+
+
+def build_suite() -> EvalSuite:
+    suite = EvalSuite.for_summarization("PR Quality Gate")
+    suite.model_id = "summarizer-pr"
+    suite.add_cases(CASES)
+    return suite
+
+
+def stable_model(prompt: str) -> str:
+    responses = {
+        "Summarize the release note.": (
+            "The release added SSO support, fixed an auth timeout bug, and removed legacy CSV export."
+        ),
+        "Summarize the support update.": (
+            "Support added Sunday coverage for enterprise customers and published a new escalation runbook."
+        ),
+        "Summarize the incident report.": (
+            "The incident report says a cache eviction bug caused a 9-minute outage before rollback succeeded."
+        ),
+    }
+    return responses[prompt]
+
+
+def candidate_model(prompt: str) -> str:
+    responses = {
+        "Summarize the release note.": (
+            "The release note says SSO support shipped, the auth timeout bug was fixed, and legacy CSV export was removed."
+        ),
+        "Summarize the support update.": (
+            "Support added Sunday coverage for enterprise customers and published a new escalation runbook."
+        ),
+        "Summarize the incident report.": (
+            "A cache eviction bug caused a 9-minute outage before the rollback completed successfully."
+        ),
+    }
+    return responses[prompt]
+
+
+def save_report(report, filename: str) -> None:
+    Path("artifacts").mkdir(exist_ok=True)
+    report.save_json(f"artifacts/{filename}")
+
+
+def record_last_week_baseline(exp: Experiment) -> str:
+    baseline_report = build_suite().run(stable_model, verbose=False)
+    return exp.record(
+        baseline_report,
+        run_id="week-2026-04-19",
+        tags={"week": "2026-04-19", "branch": "main"},
+    )
+
+
+def test_quality_gate_with_fail_threshold():
+    report = build_suite().run(stable_model, verbose=False, fail_threshold=0.85)
+    save_report(report, "quality-gate.json")
+    assert report.failed == 0
+
+
+def test_pass_rate_stays_above_target():
+    report = build_suite().run(stable_model, verbose=False)
+    save_report(report, "pass-rate.json")
+    assert report.pass_rate >= 0.90, f"Pass rate dropped to {report.pass_rate:.1%}"
+
+
+def test_no_regression_vs_last_week(tmp_path):
+    os.environ["MULTIVON_HOME"] = str(tmp_path / ".multivon")
+    exp = Experiment("pr-quality-gate")
+
+    baseline_run_id = record_last_week_baseline(exp)
+    current_report = build_suite().run(candidate_model, verbose=False)
+    save_report(current_report, "regression.json")
+
+    current_run_id = exp.record(
+        current_report,
+        run_id="week-2026-04-26",
+        tags={"week": "2026-04-26", "branch": "pull_request"},
+    )
+
+    exp.compare(baseline_run_id, current_run_id)
+
+    baseline_report = build_suite().run(stable_model, verbose=False)
+    assert current_report.pass_rate >= baseline_report.pass_rate - 0.05, (
+        f"Regression vs last week: {current_report.pass_rate:.1%} "
+        f"vs {baseline_report.pass_rate:.1%}"
+    )
+```
+
+```yaml
+# .github/workflows/eval.yml
+name: Eval Quality Gate
+
+on:
+  pull_request:
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install multivon-eval pytest
+
+      - name: Run eval tests
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: pytest tests/test_model_quality.py -q
+
+      - name: Upload eval artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report
+          path: artifacts/
+```
+
+**What to look for:** `fail_threshold` is the fastest way to turn a suite into a deployment gate, while direct assertions give you room for custom policies. The experiment comparison test adds a historical baseline, so you are not just checking "good enough" in isolation, you are checking whether the pull request made the model worse than the last known good run.
 
 ---
 
