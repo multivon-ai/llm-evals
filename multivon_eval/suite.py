@@ -365,6 +365,109 @@ class EvalSuite:
             )
         )
 
+    @classmethod
+    def for_coding(cls, name: str = "Coding Agent Eval", *, language: str = "python") -> "EvalSuite":
+        """Exact match, answer accuracy, and ROUGE for code generation tasks.
+
+        Best for: code generation, function completion, test generation.
+        Note: ``language`` is reserved for future language-specific evaluators.
+
+        Usage:
+            suite = EvalSuite.for_coding()
+            suite = EvalSuite.for_coding("TypeScript Eval", language="typescript")
+            suite.add_cases(cases)
+            report = suite.run(my_codegen_fn)
+        """
+        from .evaluators.deterministic import NotEmpty, ExactMatch, ROUGE
+        from .evaluators.llm_judge import AnswerAccuracy
+        return (
+            cls(name)
+            .add_evaluators(
+                NotEmpty(),
+                ExactMatch(),
+                AnswerAccuracy(),
+                ROUGE(),
+            )
+        )
+
+    @classmethod
+    def for_medical(cls, name: str = "Medical AI Eval", *, jurisdiction: str = "hipaa") -> "EvalSuite":
+        """PII detection, faithfulness, hallucination, and answer accuracy for clinical AI.
+
+        Best for: clinical decision support, medical Q&A, patient-facing chatbots.
+        Always pair with ComplianceReporter to maintain tamper-evident audit trails.
+
+        Usage:
+            suite = EvalSuite.for_medical()
+            suite = EvalSuite.for_medical("Clinical QA", jurisdiction="gdpr")
+            suite.add_cases(cases)
+            report = suite.run(my_clinical_fn)
+        """
+        from .evaluators.compliance import PIIEvaluator
+        from .evaluators.deterministic import NotEmpty
+        from .evaluators.llm_judge import Faithfulness, Hallucination, AnswerAccuracy
+        return (
+            cls(name)
+            .add_evaluators(
+                PIIEvaluator(jurisdiction=jurisdiction, redact=True),
+                NotEmpty(),
+                Faithfulness(),
+                AnswerAccuracy(),
+                Hallucination(),
+            )
+        )
+
+    @classmethod
+    def for_legal(cls, name: str = "Legal AI Eval") -> "EvalSuite":
+        """Faithfulness, hallucination, answer accuracy, and bias for legal AI.
+
+        Best for: contract review, legal Q&A, regulatory guidance systems.
+        Hallucination threshold matters most — fabricated citations are a critical failure mode.
+
+        Usage:
+            suite = EvalSuite.for_legal()
+            suite.add_cases(cases)
+            report = suite.run(my_legal_fn)
+        """
+        from .evaluators.deterministic import NotEmpty
+        from .evaluators.llm_judge import Faithfulness, Hallucination, AnswerAccuracy, Bias
+        return (
+            cls(name)
+            .add_evaluators(
+                NotEmpty(),
+                Faithfulness(),
+                Hallucination(),
+                AnswerAccuracy(),
+                Bias(),
+            )
+        )
+
+    @classmethod
+    def for_financial(cls, name: str = "Financial AI Eval") -> "EvalSuite":
+        """Faithfulness, hallucination, answer accuracy, and PII detection for financial AI.
+
+        Best for: financial advice bots, earnings summarizers, trading signal generators.
+        Pair with ComplianceReporter for regulatory audit trails (SEC, FINRA, MiFID II).
+
+        Usage:
+            suite = EvalSuite.for_financial()
+            suite.add_cases(cases)
+            report = suite.run(my_financial_fn)
+        """
+        from .evaluators.compliance import PIIEvaluator
+        from .evaluators.deterministic import NotEmpty
+        from .evaluators.llm_judge import Faithfulness, Hallucination, AnswerAccuracy
+        return (
+            cls(name)
+            .add_evaluators(
+                NotEmpty(),
+                Faithfulness(),
+                Hallucination(),
+                AnswerAccuracy(),
+                PIIEvaluator(jurisdiction="all"),
+            )
+        )
+
     async def run_async(
         self,
         model_fn: Callable[[str], Awaitable[str]],

@@ -27,6 +27,10 @@ Every factory suite returns a standard `EvalSuite` — you can add more evaluato
 | `for_regulated()` | PIIEvaluator, NotEmpty, Faithfulness, Relevance (+ SchemaEvaluator if `schema` provided) | Healthcare, finance, legal, government |
 | `for_chatbot()` | ConversationRelevance, KnowledgeRetention, TurnConsistency, ConversationCompleteness | Multi-turn chatbots, dialogue systems |
 | `for_classification()` | NotEmpty, ExactMatch, AnswerAccuracy | Intent classification, tagging, routing |
+| `for_coding()` | NotEmpty, ExactMatch, AnswerAccuracy, ROUGE | Code generation, function completion, test generation |
+| `for_medical()` | PIIEvaluator, NotEmpty, Faithfulness, AnswerAccuracy, Hallucination | Clinical decision support, medical Q&A, patient chatbots |
+| `for_legal()` | NotEmpty, Faithfulness, Hallucination, AnswerAccuracy, Bias | Contract review, legal Q&A, regulatory guidance |
+| `for_financial()` | NotEmpty, Faithfulness, Hallucination, AnswerAccuracy, PIIEvaluator | Financial advice bots, earnings summarizers |
 
 ---
 
@@ -181,12 +185,74 @@ report = suite.run(my_pipeline, runs=5)
 
 ---
 
+## EvalSuite.for_coding()
+
+```python
+suite = EvalSuite.for_coding()
+suite = EvalSuite.for_coding("TypeScript Eval", language="typescript")
+```
+
+**When to use:** Code generation, function completion, unit test generation. Uses ExactMatch for deterministic pass/fail and ROUGE for partial-credit overlap. The `language` parameter is reserved for future language-specific evaluators.
+
+---
+
+## EvalSuite.for_medical()
+
+```python
+suite = EvalSuite.for_medical()
+suite = EvalSuite.for_medical("Clinical QA", jurisdiction="gdpr")
+```
+
+**Parameters:**
+- `name` — suite name (default `"Medical AI Eval"`)
+- `jurisdiction` — passed to `PIIEvaluator`: `"hipaa"`, `"gdpr"`, `"ccpa"`, `"pipeda"`, or `"all"` (default `"hipaa"`)
+
+**When to use:** Clinical decision support, medical Q&A, patient-facing chatbots. PIIEvaluator runs locally — no data leaves your environment. Always pair with `ComplianceReporter` to produce tamper-evident audit trails:
+
+```python
+from multivon_eval import EvalSuite, ComplianceReporter
+
+suite = EvalSuite.for_medical(jurisdiction="hipaa")
+suite.add_cases(cases)
+report = suite.run(my_clinical_fn)
+
+reporter = ComplianceReporter("/audit/evals", framework="eu_ai_act")
+reporter.record(report, tags={"system": "triage-bot", "version": "1.0"})
+```
+
+---
+
+## EvalSuite.for_legal()
+
+```python
+suite = EvalSuite.for_legal()
+suite = EvalSuite.for_legal("Contract Review Eval")
+```
+
+**When to use:** Contract review, legal Q&A, regulatory guidance systems. Hallucination threshold matters most — fabricated citations are a critical failure mode in legal AI. Consider tightening the threshold:
+
+```python
+suite = EvalSuite.for_legal()
+suite.add_evaluators(Hallucination(threshold=0.95))  # override default
+```
+
+---
+
+## EvalSuite.for_financial()
+
+```python
+suite = EvalSuite.for_financial()
+suite = EvalSuite.for_financial("Earnings Summarizer Eval")
+```
+
+**When to use:** Financial advice bots, earnings summarizers, trading signal generators. Includes `PIIEvaluator(jurisdiction="all")` to catch PII across all supported frameworks. Pair with `ComplianceReporter` for regulatory audit trails (SEC, FINRA, MiFID II).
+
+---
+
 ## Future improvements
 
-Factory suites will expand in upcoming versions:
-- Domain-specific evaluators (medical, legal, financial)
 - Thresholds calibrated by industry benchmarks
-- `EvalSuite.for_coding()` for code generation systems
 - Multi-modal evaluation (vision + text)
+- `for_coding()` language-specific evaluators (syntax checking, test execution)
 
 See [GitHub discussions](https://github.com/multivon-ai/multivon-eval/discussions) to request specific use cases.
