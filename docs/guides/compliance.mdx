@@ -38,7 +38,13 @@ PIIEvaluator(jurisdiction="ccpa")
 
 # PIPEDA (Canada) — base patterns
 PIIEvaluator(jurisdiction="pipeda")
+
+# HIPAA — adds MRN, health plan numbers, VINs, fax numbers,
+#          admission/discharge dates, device IDs, NPI/DEA numbers, URLs
+PIIEvaluator(jurisdiction="hipaa")
 ```
+
+**HIPAA coverage note:** This evaluator detects 13 of 18 HIPAA Safe Harbor PHI identifiers via regex. The remaining 5 (patient names, geographic subdivisions below state, photographs, biometric data, and arbitrary unique identifiers) cannot be reliably detected from text output and require de-identification before the text reaches the evaluator. For full HIPAA Safe Harbor compliance, combine `PIIEvaluator(jurisdiction="hipaa")` with an upstream de-identification step.
 
 ### Custom patterns
 

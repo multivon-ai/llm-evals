@@ -18,6 +18,7 @@ from multivon_eval import PIIEvaluator
 
 suite.add_evaluators(PIIEvaluator())
 suite.add_evaluators(PIIEvaluator(jurisdiction="gdpr"))
+suite.add_evaluators(PIIEvaluator(jurisdiction="hipaa"))
 suite.add_evaluators(PIIEvaluator(redact=True))
 suite.add_evaluators(PIIEvaluator(patterns={"employee_id": r"EMP-\d{6}"}))
 ```
@@ -26,10 +27,15 @@ suite.add_evaluators(PIIEvaluator(patterns={"employee_id": r"EMP-\d{6}"}))
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `jurisdiction` | `"all"` | `"gdpr"`, `"ccpa"`, `"pipeda"`, or `"all"` |
+| `jurisdiction` | `"all"` | `"gdpr"`, `"ccpa"`, `"pipeda"`, `"hipaa"`, or `"all"` |
 | `patterns` | `None` | Additional `{name: regex}` patterns |
 | `redact` | `False` | Replace PII with `[REDACTED-TYPE]` in reports |
 | `threshold` | `1.0` | Pass threshold (default: any PII = fail) |
+
+**HIPAA jurisdiction** adds patterns for 13 of the 18 HIPAA Safe Harbor PHI identifiers:
+medical record numbers, health plan beneficiary numbers, VINs, fax numbers, admission/discharge dates, device identifiers, account numbers, NPI/DEA/license numbers, certificate numbers, and URLs.
+
+The 5 identifiers that cannot be reliably detected via regex — names, geographic subdivisions below state, photographs, biometrics, and arbitrary unique identifiers — require upstream de-identification before evaluation.
 
 **Sample output:**
 ```

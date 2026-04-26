@@ -122,7 +122,38 @@ ToolCallNecessity()
 
 For each tool call, the judge sees all prior calls and asks: was this strictly necessary? Catches agents that over-call tools, re-fetch data they already have, or take "defensive" actions that add no value.
 
-Score = fraction of tool calls that were judged necessary.
+### Scoring
+
+```
+score = count(tool calls judged necessary) / count(all tool calls)
+```
+
+Returns `1.0` if the agent made no tool calls. Capped at 8 tool calls per trace to control cost.
+
+Each tool call is evaluated independently with full prior-call context. The judge prompt is:
+
+> "Given what the agent already knows from prior tool calls, was calling `{tool_name}` with these arguments strictly necessary to make progress on the task?"
+
+| Score | Meaning |
+|-------|---------|
+| 1.0 | All tool calls were necessary |
+| 0.5 | Half of tool calls were redundant |
+| 0.0 | Every tool call was unnecessary |
+
+### Example
+
+```python
+# Agent calls search() twice with the same query — second call is redundant
+case = EvalCase(
+    input="Find the latest Python release",
+    agent_trace=[
+        AgentStep(tool_calls=[ToolCall(name="search", arguments={"query": "Python latest release"})]),
+        AgentStep(tool_calls=[ToolCall(name="search", arguments={"query": "Python latest release"})]),
+        AgentStep(output="Python 3.13 was released in October 2024."),
+    ],
+)
+# Expected ToolCallNecessity score: 0.5 (1 of 2 calls necessary)
+```
 
 ## TrajectoryEfficiency
 
@@ -134,12 +165,44 @@ from multivon_eval import TrajectoryEfficiency
 TrajectoryEfficiency()
 ```
 
-Assesses:
-- Did the agent avoid unnecessary detours and repeated steps?
-- Is the step count proportionate to task complexity?
-- If a tool returned an error, did the agent recover (retry, alternative, or clear failure signal)?
+### Scoring
 
-When failed tool calls are detected in the trace, a separate recovery check runs and can penalize the score by up to 0.2.
+**Step 1 — Base score** (average of 3 binary QAG questions):
+
+| Question | What it catches |
+|----------|----------------|
+| Did the agent complete the task without unnecessary detours? | Off-topic steps, tangential tool calls |
+| Is the step count proportionate to task complexity? | Over-engineered solutions |
+| Did the agent avoid repeating steps it had already completed? | Duplicate fetches, re-running the same computation |
+
+Each question is answered yes/no by an LLM judge. Base score = mean of the three answers (0.0–1.0).
+
+**Step 2 — Error recovery penalty** (runs only when failed tool calls are detected):
+
+> "Did the agent handle tool failures by retrying with different arguments, switching to an alternative approach, or signalling a clear failure — rather than silently continuing as if the call succeeded?"
+
+If **no**: `score = max(0.0, base_score - 0.2)`
+
+```
+final_score ∈ [0.0, 1.0]
+```
+
+### Example
+
+```python
+# Agent hits a 404 on the first tool call and tries the same call again unchanged
+case = EvalCase(
+    input="Get the current stock price of AAPL",
+    agent_trace=[
+        AgentStep(tool_calls=[ToolCall(name="get_price", arguments={"ticker": "AAPL"}, result="Error: 404")]),
+        AgentStep(tool_calls=[ToolCall(name="get_price", arguments={"ticker": "AAPL"}, result="Error: 404")]),
+        AgentStep(output="I was unable to retrieve the price."),
+    ],
+)
+# Base score might be 0.67 (completes task, proportionate steps, but repeats a failed call)
+# Recovery penalty: -0.2 (agent re-ran the same failing call without modification)
+# Final TrajectoryEfficiency score: 0.47
+```
 
 ## AgentMemoryEval
 
