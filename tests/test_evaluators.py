@@ -1,6 +1,6 @@
 import pytest
-from llm_evals import EvalCase, ExactMatch, Contains, RegexMatch, JSONSchemaEval, NotEmpty, WordCount
-from llm_evals.evaluators.deterministic import Latency
+from multivon_eval import EvalCase, ExactMatch, Contains, RegexMatch, JSONSchemaEval, NotEmpty, WordCount
+from multivon_eval.evaluators.deterministic import Latency
 
 
 def case(input="test", expected=None, context=None):
