@@ -1,0 +1,122 @@
+---
+title: Reliability & Flakiness Detection
+description: Handle LLM non-determinism with multi-run evaluation, flakiness detection, and statistical significance testing.
+---
+
+LLMs are non-deterministic. The same input can produce different outputs across runs — especially in agents where variance compounds at every step. A single-run pass/fail tells you very little: did the case fail because your model regressed, or because it got unlucky this time?
+
+Multi-run evaluation turns flakiness from an invisible problem into a measurable signal.
+
+## Run each case multiple times
+
+```python
+report = suite.run(model_fn, runs=5)
+```
+
+That's the only change. Every case now runs 5 times and the results are aggregated:
+- **Score**: mean across runs
+- **Pass rate**: fraction of runs that passed
+- **Stability**: whether the case behaves consistently
+
+## Reading the results
+
+```python
+report.flaky_count      # cases that sometimes pass, sometimes fail
+report.stability_score  # 1.0 = fully consistent, 0.0 = all flaky
+
+for cr in report.case_results:
+    cr.run_pass_rate  # e.g. 0.6 = passed 3/5 runs
+    cr.score_std      # spread in scores across runs — higher = more variable
+    cr.is_flaky       # True if 0 < pass_count < runs
+```
+
+A case is **flaky** if it passed at least once but not always. This is the most actionable signal — it means the model is uncertain about that input, not just consistently wrong.
+
+## Terminal output
+
+The reporter adds pass rate and stability columns automatically when `runs > 1`:
+
+```
+  #   Input          Output    Score      Pass Rate   Stability   Status
+ ───────────────────────────────────────────────────────────────────────
+  1   What is 2+2?   4         1.00±0.00       100%   stable      PASS
+  2   Summarize…     …         0.60±0.49        60%   flaky       FLAKY
+  3   Who wrote…     …         0.20±0.40        20%   flaky       FLAKY
+
+  ⚠ 2 flaky case(s) — passed inconsistently across 5 runs:
+    • 'Summarize…'  (3/5 runs passed)
+    • 'Who wrote…'  (1/5 runs passed)
+
+  Stability: 33%   Flaky: 2
+```
+
+## Combine with parallel execution
+
+Run cases in parallel and each case multiple times:
+
+```python
+report = suite.run(model_fn, runs=5, workers=8)
+```
+
+Cases run concurrently; each case's 5 repetitions run sequentially. Good default for large suites.
+
+## Statistical significance in experiment comparison
+
+When comparing two runs, `exp.compare()` now shows whether the difference is real or sampling noise:
+
+```python
+exp.compare(run_v1, run_v2)
+```
+
+```
+Pass rate           84.0%  →   91.0%  ↑  +0.0700
+
+Statistical significance: p=0.03 ✦ significant
+Verdict: IMPROVED — pass rate up +7.0%
+```
+
+vs a smaller dataset:
+
+```
+Statistical significance: p=0.29 not significant (likely noise)
+Verdict: IMPROVED — pass rate up +7.0%
+```
+
+Same delta, different conclusions — because with 10 cases, a 7% change is within noise. With 100 cases, it's real.
+
+**Significance levels:**
+- `p<0.01 ✦✦` — highly significant, very unlikely to be noise
+- `p<0.05 ✦` — significant at the standard threshold
+- `p<0.10` — marginal, treat with caution
+- `p≥0.10` — not significant, likely sampling noise
+
+## CI/CD: fail on instability
+
+```python
+report = suite.run(model_fn, runs=3, fail_threshold=0.85)
+
+# Optionally also fail if too many flaky cases
+if report.stability_score < 0.90:
+    raise SystemExit(f"Too many flaky cases: {report.flaky_count} ({report.stability_score:.0%} stable)")
+```
+
+## Recommended defaults
+
+| Use case | `runs` | `workers` |
+|---|---|---|
+| Quick CI check | 1 | 4–8 |
+| Nightly regression | 3 | 8 |
+| Flakiness audit | 5–10 | 4 |
+| Agent evaluation | 5 | 2–4 |
+
+More runs = more reliable signal, but proportionally more model calls. Start at `runs=3` for most pipelines.
+
+## How scores are aggregated
+
+For each case across N runs:
+- **Score**: mean of per-run scores
+- **Passed**: majority vote — passes if more than half of runs passed
+- **Flaky**: `0 < pass_count < N` (at least one pass and one fail)
+- **Latency**: mean across runs
+
+Per-evaluator scores in the report also use mean + majority vote, so the evaluator breakdown remains interpretable.

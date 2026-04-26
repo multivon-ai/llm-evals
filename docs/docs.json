@@ -49,6 +49,7 @@
             "pages": [
               "guides/generate",
               "guides/experiments",
+              "guides/reliability",
               "guides/datasets",
               "guides/synthetic-data",
               "guides/ci-cd",
