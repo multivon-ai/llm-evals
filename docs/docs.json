@@ -41,6 +41,7 @@
               "evaluators/deterministic",
               "evaluators/llm-judge",
               "evaluators/agent",
+              "evaluators/compliance",
               "evaluators/conversation"
             ]
           },
@@ -51,6 +52,8 @@
               "guides/generate",
               "guides/experiments",
               "guides/reliability",
+              "guides/statistical-rigor",
+              "guides/compliance",
               "guides/datasets",
               "guides/synthetic-data",
               "guides/ci-cd",

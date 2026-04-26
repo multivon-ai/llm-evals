@@ -1,0 +1,275 @@
+---
+title: Compliance & Privacy
+description: PII detection, schema validation, and tamper-evident audit trails — all local, no API calls.
+---
+
+For regulated industries (healthcare, finance, legal, government), your eval traces can't leave your environment. multivon-eval's compliance tools run entirely locally: no cloud, no LLM calls for PII detection.
+
+---
+
+## PII Detection
+
+`PIIEvaluator` scans LLM outputs for personally identifiable information using regex patterns. Zero API calls — suitable for air-gapped environments.
+
+### Basic usage
+
+```python
+from multivon_eval import EvalSuite, PIIEvaluator
+
+suite = EvalSuite("Patient Intake Bot Eval")
+suite.add_evaluators(PIIEvaluator())
+
+report = suite.run(model_fn)
+```
+
+A case fails if any PII is detected in the output. The failure reason lists each PII type and example matches.
+
+### Jurisdiction-specific patterns
+
+```python
+# All patterns (default)
+PIIEvaluator()
+
+# GDPR (EU) — adds EU VAT numbers
+PIIEvaluator(jurisdiction="gdpr")
+
+# CCPA (California) — adds bank account numbers
+PIIEvaluator(jurisdiction="ccpa")
+
+# PIPEDA (Canada) — base patterns
+PIIEvaluator(jurisdiction="pipeda")
+```
+
+### Custom patterns
+
+```python
+PIIEvaluator(patterns={
+    "employee_id": r"EMP-\d{6}",
+    "case_number": r"CASE-[A-Z]{2}\d{8}",
+})
+```
+
+### Redacting PII from reports
+
+By default, matched PII is shown in the reason field. To mask it in audit logs:
+
+```python
+PIIEvaluator(redact=True)
+# reason: PII detected (2 type(s)):
+#   email: "[REDACTED-EMAIL]"
+#   phone_us: "[REDACTED-PHONE_US]"
+```
+
+### What's detected
+
+| Pattern | Examples |
+|---------|---------|
+| `email` | user@company.com |
+| `phone_us` | 555-123-4567, (800) 555-0100 |
+| `phone_intl` | +44 7911 123456 |
+| `ssn` | 123-45-6789 |
+| `credit_card` | 4111 1111 1111 1111 |
+| `iban` | DE89370400440532013000 |
+| `ip_address` | 192.168.1.1 |
+| `date_of_birth` | DOB: 12/05/1985 |
+| `passport` | AB1234567 |
+| `address` | 123 Main Street |
+| `eu_vat` (GDPR) | DE123456789 |
+| `bank_account` (CCPA) | 12345678901234 |
+
+---
+
+## Structured Output Validation
+
+`SchemaEvaluator` validates that LLM outputs conform to a defined structure. Works with Pydantic models and JSON Schema dicts. Reports per-field failures — not just valid/invalid.
+
+[StructEval (2025)](https://arxiv.org/abs/2502.09281) found GPT-4 fails complex structured extraction ~12% of the time. This evaluator catches those failures in your specific pipeline.
+
+### Pydantic model
+
+```python
+from pydantic import BaseModel
+from multivon_eval import SchemaEvaluator
+
+class InvoiceExtraction(BaseModel):
+    vendor: str
+    amount: float
+    currency: str
+    invoice_date: str
+    line_items: list[str]
+
+suite.add_evaluators(SchemaEvaluator(InvoiceExtraction))
+```
+
+Supports Pydantic v1 and v2. Field-level error messages:
+
+```
+Schema validation failed:
+  amount: Input should be a valid number, unable to parse string as a number
+  currency: Field required
+```
+
+### JSON Schema
+
+```python
+suite.add_evaluators(SchemaEvaluator({
+    "type": "object",
+    "required": ["title", "score", "category"],
+    "properties": {
+        "title": {"type": "string", "maxLength": 100},
+        "score": {"type": "number", "minimum": 0, "maximum": 1},
+        "category": {"type": "string", "enum": ["positive", "negative", "neutral"]},
+    }
+}))
+```
+
+### Handling markdown code fences
+
+`SchemaEvaluator` automatically strips markdown code fences from outputs:
+
+````
+```json
+{"title": "Great product", "score": 0.9, "category": "positive"}
+```
+````
+
+This is valid — the schema evaluator strips the fence before parsing.
+
+---
+
+## Compliance Audit Trail
+
+`ComplianceReporter` writes a tamper-evident NDJSON log of every eval run, with SHA-256 hashing and regulatory control annotations.
+
+### Basic usage
+
+```python
+from multivon_eval import EvalSuite, ComplianceReporter
+
+suite = EvalSuite("HR Bot Eval")
+reporter = ComplianceReporter(
+    output_dir="./audit-logs",
+    framework="eu-ai-act",
+)
+
+report = suite.run(model_fn)
+record_id = reporter.record(report, tags={"version": "2.1", "env": "staging"})
+# [compliance] audit record → a3f9b2c1  (hr_bot_eval.audit.ndjson)
+# [compliance] framework: eu-ai-act
+```
+
+### Framework mappings
+
+```python
+# EU AI Act Article 9 annotations
+ComplianceReporter(framework="eu-ai-act")
+
+# NIST AI RMF annotations
+ComplianceReporter(framework="nist-ai-rmf")
+
+# No framework — raw scores only
+ComplianceReporter(framework="none")
+```
+
+**EU AI Act Article 9 mappings:**
+
+| Evaluator | Control |
+|-----------|---------|
+| `faithfulness`, `hallucination` | Article 9(4)(a) — Accuracy & reliability |
+| `pii_detection` | Article 9(4)(b) — Privacy & data governance |
+| `schema_compliance`, `not_empty` | Article 9(4)(c) — Robustness & output consistency |
+| `toxicity`, `bias` | Article 9(6) — Bias & discrimination monitoring |
+| `task_completion`, `tool_call_accuracy` | Article 9(5) — Task performance logging |
+
+### Verifying integrity
+
+```python
+# Verify all records in the audit log are intact
+ok = reporter.verify("HR Bot Eval")
+#   OK  a3f9b2c1  2025-11-14T09:23:11
+#   OK  b7d1e4f2  2025-11-15T14:07:42
+#   Verification: PASS — all records intact
+```
+
+### Audit record format
+
+Each NDJSON line:
+
+```json
+{
+  "record_id": "a3f9b2c1ef20",
+  "suite_name": "HR Bot Eval",
+  "model_id": "claude-sonnet-4-5",
+  "timestamp": "2025-11-14T09:23:11.821Z",
+  "framework": "eu-ai-act",
+  "summary": {
+    "total": 50,
+    "passed": 46,
+    "pass_rate": 0.92,
+    "tags": {"version": "2.1", "env": "staging"}
+  },
+  "evaluator_results": [
+    {
+      "evaluator": "faithfulness",
+      "avg_score": 0.89,
+      "pass_rate": 0.88,
+      "control": "Article 9(4)(a) — Accuracy & reliability"
+    }
+  ],
+  "record_hash": "sha256:e3b0c44298fc1c149afb..."
+}
+```
+
+### Full compliance pipeline
+
+```python
+from multivon_eval import (
+    EvalSuite, EvalCase,
+    Faithfulness, PIIEvaluator, SchemaEvaluator,
+    ComplianceReporter,
+)
+from pydantic import BaseModel
+
+class ClinicalSummary(BaseModel):
+    diagnosis: str
+    recommended_action: str
+    urgency: str
+
+suite = EvalSuite("Clinical AI Eval")
+suite.add_cases(load("tests/clinical_cases.jsonl"))
+suite.add_evaluators(
+    Faithfulness(),
+    PIIEvaluator(jurisdiction="gdpr", redact=True),
+    SchemaEvaluator(ClinicalSummary),
+)
+
+reporter = ComplianceReporter("./audit-logs", framework="eu-ai-act")
+report = suite.run(model_fn)
+reporter.record(report, tags={"regulatory_period": "Q4-2025"})
+
+# Fail CI if PII detected or schema invalid
+if report.pass_rate < 1.0:
+    raise SystemExit(f"Compliance check failed: {report.failed} case(s) failed")
+```
+
+---
+
+## CI/CD Integration
+
+```yaml
+# .github/workflows/compliance-eval.yml
+jobs:
+  compliance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install multivon-eval
+      - run: python evals/compliance_check.py
+        # No API key needed for PIIEvaluator + SchemaEvaluator
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audit-logs
+          path: ./audit-logs/
+```
+
+The audit logs in `./audit-logs/` are the compliance artifacts — store them alongside your release artifacts.

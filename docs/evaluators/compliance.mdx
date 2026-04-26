@@ -1,0 +1,94 @@
+---
+title: Compliance Evaluators
+description: Local PII detection and schema validation — no API calls required.
+---
+
+Compliance evaluators run entirely within your environment. No data leaves your infrastructure.
+
+---
+
+## PIIEvaluator
+
+Scans LLM outputs for personally identifiable information using local regex patterns.
+
+**Passes** when no PII is detected. **Fails** with a per-type breakdown.
+
+```python
+from multivon_eval import PIIEvaluator
+
+suite.add_evaluators(PIIEvaluator())
+suite.add_evaluators(PIIEvaluator(jurisdiction="gdpr"))
+suite.add_evaluators(PIIEvaluator(redact=True))
+suite.add_evaluators(PIIEvaluator(patterns={"employee_id": r"EMP-\d{6}"}))
+```
+
+**Parameters:**
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `jurisdiction` | `"all"` | `"gdpr"`, `"ccpa"`, `"pipeda"`, or `"all"` |
+| `patterns` | `None` | Additional `{name: regex}` patterns |
+| `redact` | `False` | Replace PII with `[REDACTED-TYPE]` in reports |
+| `threshold` | `1.0` | Pass threshold (default: any PII = fail) |
+
+**Sample output:**
+```
+PII detected (2 type(s)):
+  email: "user@company.com"
+  phone_us: "555-123-4567"
+```
+
+---
+
+## SchemaEvaluator
+
+Validates that LLM outputs conform to a Pydantic model or JSON Schema dict.
+
+**Passes** when output is valid JSON matching the schema. **Fails** with per-field error messages.
+
+```python
+from pydantic import BaseModel
+from multivon_eval import SchemaEvaluator
+
+class Summary(BaseModel):
+    title: str
+    score: float
+    tags: list[str]
+
+suite.add_evaluators(SchemaEvaluator(Summary))
+
+# JSON Schema alternative
+suite.add_evaluators(SchemaEvaluator({
+    "type": "object",
+    "required": ["title", "score"],
+    "properties": {
+        "title": {"type": "string"},
+        "score": {"type": "number", "minimum": 0, "maximum": 1},
+    }
+}))
+```
+
+**Parameters:**
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `schema` | required | Pydantic model class or JSON Schema dict |
+| `strict` | `False` | Fail on extra fields not in schema |
+| `threshold` | `1.0` | Pass threshold (default: any field error = fail) |
+
+Strips markdown code fences automatically before parsing.
+
+**Sample output:**
+```
+Schema validation failed:
+  score: Input should be a valid number
+  tags: Field required
+```
+
+---
+
+## ComplianceReporter
+
+Not an evaluator — a report writer. Produces tamper-evident NDJSON audit trails.
+
+See [Compliance & Privacy guide](/guides/compliance) for full documentation.

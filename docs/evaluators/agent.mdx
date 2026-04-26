@@ -108,6 +108,64 @@ StepFaithfulness()
 
 Catches agents that take unexpected detours or perform steps that contradict earlier observations.
 
+---
+
+## ToolCallNecessity
+
+Evaluates whether each tool call was actually needed, or if it was redundant given the context and what had already been done.
+
+```python
+from multivon_eval import ToolCallNecessity
+
+ToolCallNecessity()
+```
+
+For each tool call, the judge sees all prior calls and asks: was this strictly necessary? Catches agents that over-call tools, re-fetch data they already have, or take "defensive" actions that add no value.
+
+Score = fraction of tool calls that were judged necessary.
+
+## TrajectoryEfficiency
+
+Evaluates whether the agent took the most efficient path to the answer, and whether it recovered correctly from tool failures.
+
+```python
+from multivon_eval import TrajectoryEfficiency
+
+TrajectoryEfficiency()
+```
+
+Assesses:
+- Did the agent avoid unnecessary detours and repeated steps?
+- Is the step count proportionate to task complexity?
+- If a tool returned an error, did the agent recover (retry, alternative, or clear failure signal)?
+
+When failed tool calls are detected in the trace, a separate recovery check runs and can penalize the score by up to 0.2.
+
+## AgentMemoryEval
+
+Evaluates whether a multi-session agent uses prior context correctly — retrieving accurately, not hallucinating past context, and forgetting appropriately.
+
+Requires `case.context` (prior session summary or log) and `case.input` (current query that needs memory).
+
+```python
+from multivon_eval import AgentMemoryEval, EvalCase
+
+case = EvalCase(
+    input="What did I ask you to prioritize last session?",
+    context="Prior session (2025-11-10): User asked to prioritize the auth module. They mentioned the deadline is end of November.",
+    expected_output="auth module",
+)
+suite.add_evaluators(AgentMemoryEval())
+```
+
+Assesses:
+- Does the response correctly use information from the prior context?
+- Does it avoid hallucinating facts not in the prior context?
+- Does it ignore superseded or stale information?
+- If `expected_output` is provided, does the response include it?
+
+Aligned with [AMA-Bench (2025)](https://arxiv.org/abs/2503.08174), the first benchmark for multi-session agent memory.
+
 ## Full agent eval example
 
 ```python
@@ -128,6 +186,8 @@ suite.add_cases(cases)
 suite.add_evaluators(
     ToolCallAccuracy(require_order=False),
     ToolArgumentAccuracy(),
+    ToolCallNecessity(),
+    TrajectoryEfficiency(),
     PlanQuality(),
     TaskCompletion(threshold=0.85),
 )

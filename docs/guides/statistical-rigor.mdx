@@ -1,0 +1,137 @@
+---
+title: Statistical Rigor
+description: Confidence intervals, power analysis, and when to trust your eval scores.
+---
+
+Single-run benchmark scores are unreliable. [NAACL 2025](https://arxiv.org/abs/2502.01775) showed that variance between runs is large enough to reverse model rankings — a model that looks 5% better in one run may simply be lucky.
+
+multivon-eval is the only eval library that operationalizes this: confidence intervals on every comparison, a minimum-cases calculator, and power hints when your test suite is too small to trust the result.
+
+---
+
+## Why single-run scores lie
+
+LLMs are non-deterministic. Even with `temperature=0`, hosted APIs introduce variance through hardware parallelism and batching ([ACL 2025](https://arxiv.org/abs/2503.04483)). A 91% pass rate on 50 cases could be anywhere from 80% to 97% if you ran the same cases again.
+
+**The fix:** run more cases, run each case multiple times, and use confidence intervals to understand what your score actually means.
+
+---
+
+## Confidence intervals with `wilson_interval`
+
+The Wilson score interval is the most reliable CI for binomial proportions — it handles small n and extreme pass rates much better than the normal approximation.
+
+```python
+from multivon_eval import wilson_interval
+
+# 80 passing out of 100 cases
+lo, hi = wilson_interval(80, 100)
+print(f"95% CI: [{lo:.1%}, {hi:.1%}]")
+# → 95% CI: [71.1%, 86.7%]
+
+# Small test suite: 8 of 10 passing
+lo, hi = wilson_interval(8, 10)
+print(f"95% CI: [{lo:.1%}, {hi:.1%}]")
+# → 95% CI: [49.0%, 97.3%]
+# Wide interval — you can't conclude much from 10 cases
+```
+
+**`experiment.compare()` shows these automatically:**
+
+```
+  95% CI (before): [71.4%, 89.3%]
+  95% CI (after):  [83.5%, 96.2%]
+  Statistical significance: p=0.01 ✦✦ highly significant
+  Verdict: IMPROVED — pass rate up +12.0%
+```
+
+---
+
+## Know how many cases you need
+
+Before running an eval, calculate whether your test suite is large enough to detect the improvement you care about.
+
+```python
+from multivon_eval import runs_needed
+
+# How many test cases to detect a 10% improvement (80% power)?
+n = runs_needed(delta=0.10)
+# → 291
+
+# Smaller improvement requires more cases
+n = runs_needed(delta=0.05)
+# → 1248
+
+# Higher power threshold
+n = runs_needed(delta=0.10, power=0.90)
+# → 390
+
+# Different baseline pass rate
+n = runs_needed(delta=0.10, baseline=0.85)
+# → 193
+```
+
+**Rule of thumb:**
+
+| Effect size | Min cases needed |
+|-------------|-----------------|
+| 15% improvement | ~118 |
+| 10% improvement | ~291 |
+| 5% improvement | ~1,248 |
+| 2% improvement | ~7,700 |
+
+A 2% improvement requires ~7,700 cases to confirm statistically. Most teams shouldn't chase differences that small.
+
+---
+
+## Power hints in `compare()`
+
+When `compare()` finds a difference that doesn't reach p < 0.05, it tells you how many more cases you'd need:
+
+```
+  Statistical significance: p=0.23 not significant (likely noise)
+  Hint: need ≥291 test cases to detect this 10% delta at 80% power.
+  Verdict: No meaningful change in pass rate.
+```
+
+This is the difference between "we improved" and "we think we improved but can't tell yet."
+
+---
+
+## Multi-run flakiness detection
+
+Combine `runs=N` with statistical rigor for per-case stability analysis:
+
+```python
+report = suite.run(model_fn, runs=10)
+
+print(f"Stability: {report.stability_score:.0%}")   # % of non-flaky cases
+print(f"Flaky cases: {report.flaky_count}")
+
+for cr in report.case_results:
+    lo, hi = wilson_interval(cr.pass_count, cr.runs)
+    print(f"  {cr.case_input[:40]}: {cr.run_pass_rate:.0%} [{lo:.0%}, {hi:.0%}]")
+```
+
+---
+
+## Recommended defaults
+
+| Scenario | Setting |
+|----------|---------|
+| Quick iteration | `runs=1`, 20–50 cases (fast, coarse) |
+| Pre-ship check | `runs=3`, 100+ cases |
+| Regression gate | `runs=5`, 200+ cases, `fail_threshold=0.85` |
+| Significance test | `runs=1`, ≥291 cases for 10% delta detection |
+| Flakiness audit | `runs=10`, any case count |
+
+---
+
+## Interpretation checklist
+
+Before trusting an eval result, ask:
+
+1. **Is the improvement statistically significant?** (`exp.compare()` shows p-value)
+2. **Are the confidence intervals non-overlapping?** If CI(before) and CI(after) overlap, the difference is inconclusive.
+3. **Do I have enough cases?** Use `runs_needed()` to check before running.
+4. **Are there flaky cases inflating the variance?** Check `report.flaky_count`.

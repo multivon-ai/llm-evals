@@ -65,7 +65,13 @@ Existing tools have real limitations:
 
 **Reliability & flakiness detection** — LLMs are non-deterministic. Run each case N times with `suite.run(runs=5)` to detect cases that pass sometimes and fail others. Statistical significance in experiment comparison tells you whether a regression is real or noise.
 
-**Experiment tracking** — Record every run, compare across model versions, catch regressions before they reach users. p-values included.
+**Statistical rigor built in** — Wilson score confidence intervals on pass rates. `runs_needed(delta=0.05)` tells you how many test cases you need before a 5% improvement is statistically detectable. Backed by NAACL 2025: single-run eval scores are unreliable.
+
+**Agent trajectory evaluation** — Beyond "did the task complete?": evaluate whether tool calls were necessary, whether the agent took the optimal number of steps, and whether it recovered correctly from tool failures. Plus `AgentMemoryEval` for multi-session agents.
+
+**Local-first compliance** — `PIIEvaluator` detects PII in outputs using local regex patterns (zero API calls). `SchemaEvaluator` validates structured outputs against Pydantic models or JSON Schema with per-field failure breakdowns. `ComplianceReporter` writes tamper-evident NDJSON audit trails mapped to EU AI Act Article 9 and NIST AI RMF controls.
+
+**Experiment tracking** — Record every run, compare across model versions, catch regressions before they reach users. p-values, confidence intervals, and power hints included.
 
 ---
 
@@ -168,16 +174,26 @@ CustomRubric(
 | Evaluator | What it checks |
 |-----------|---------------|
 | `ToolCallAccuracy` | Expected tools called (ordered or unordered) |
-| `ToolArgumentAccuracy` | Quality of tool arguments |
+| `ToolArgumentAccuracy` | Quality of tool arguments (LLM judge) |
+| `ToolCallNecessity` | Were tool calls actually needed, or redundant? |
+| `TrajectoryEfficiency` | Optimal step count + error recovery quality |
+| `AgentMemoryEval` | Multi-session memory: retrieval, forgetting, consistency |
 | `PlanQuality` | Plan logic, completeness, efficiency |
 | `TaskCompletion` | Final output satisfies the task goal |
 | `StepFaithfulness` | Each step follows logically from prior |
 
 ```python
-from multivon_eval import ToolCallAccuracy
+from multivon_eval import ToolCallAccuracy, ToolCallNecessity, AgentMemoryEval
 
 ToolCallAccuracy(require_order=True)  # strict ordering
 ToolCallAccuracy(require_order=False) # set match (default)
+
+# Multi-session memory eval
+case = EvalCase(
+    input="What did I ask you to prioritize last week?",
+    context="Prior session: User set priority to shipping the auth module first.",
+)
+suite.add_evaluators(AgentMemoryEval())
 ```
 
 #### Tier 4: Conversation evaluators
@@ -261,6 +277,109 @@ Summarize this.,,Long text here,summarization
 report.save_json("results.json")
 report.save_csv("results.csv")
 ```
+
+---
+
+## Compliance & privacy evaluators
+
+For regulated industries (healthcare, finance, legal) where traces can't leave your environment.
+
+### PII Detection (zero API calls)
+
+```python
+from multivon_eval import PIIEvaluator
+
+suite.add_evaluators(
+    PIIEvaluator()                        # all patterns, all jurisdictions
+    PIIEvaluator(jurisdiction="gdpr")     # GDPR-specific extensions
+    PIIEvaluator(jurisdiction="ccpa")     # California CCPA
+    PIIEvaluator(redact=True)             # mask PII in the report
+    PIIEvaluator(patterns={               # custom patterns
+        "employee_id": r"EMP-\d{6}",
+    })
+)
+```
+
+Detects: email, phone, SSN, credit card, IP address, IBAN, date of birth, passport numbers, physical addresses. Reports per-type with examples. Zero LLM calls — regex only.
+
+### Structured output validation
+
+```python
+from pydantic import BaseModel
+from multivon_eval import SchemaEvaluator
+
+class ExtractedInvoice(BaseModel):
+    vendor: str
+    amount: float
+    currency: str
+    date: str
+
+# Validate every output against your schema
+suite.add_evaluators(SchemaEvaluator(ExtractedInvoice))
+
+# Or use JSON Schema directly
+suite.add_evaluators(SchemaEvaluator({
+    "type": "object",
+    "required": ["vendor", "amount"],
+    "properties": {
+        "vendor": {"type": "string"},
+        "amount": {"type": "number"},
+    }
+}))
+```
+
+Per-field failures reported. Based on StructEval (2025): GPT-4 fails complex structured extraction ~12% of the time even with explicit format instructions.
+
+### Audit trail generation
+
+```python
+from multivon_eval import ComplianceReporter
+
+reporter = ComplianceReporter(
+    output_dir="./audit-logs",
+    framework="eu-ai-act",   # or "nist-ai-rmf" or "none"
+)
+report = suite.run(model_fn)
+record_id = reporter.record(report)
+
+# Verify integrity of the audit log
+reporter.verify("My Eval Suite")
+```
+
+Produces append-only NDJSON audit records, SHA-256 hashed. Each evaluator result is annotated with the relevant EU AI Act Article 9 / NIST AI RMF control category.
+
+---
+
+## Statistical rigor
+
+Backed by [NAACL 2025](https://arxiv.org/abs/2502.01775): single-run benchmark scores are unreliable — variance is large enough to reverse model rankings.
+
+### Confidence intervals on pass rates
+
+```python
+from multivon_eval import wilson_interval
+
+# 95% Wilson score CI for 80 passing out of 100 cases
+lo, hi = wilson_interval(80, 100)
+print(f"95% CI: [{lo:.1%}, {hi:.1%}]")   # → [71.1%, 86.7%]
+
+# experiment.compare() now shows CIs automatically:
+#   95% CI (before): [71.4%, 89.3%]
+#   95% CI (after):  [83.5%, 96.2%]
+```
+
+### Minimum test cases calculator
+
+```python
+from multivon_eval import runs_needed
+
+# How many test cases do you need to detect a 10% improvement?
+n = runs_needed(delta=0.10)          # → 291
+n = runs_needed(delta=0.05)          # → 1248
+n = runs_needed(delta=0.10, power=0.90)  # higher power → more cases
+```
+
+If `exp.compare()` finds a non-significant difference, it now automatically suggests the minimum number of test cases needed to confirm or rule out that effect.
 
 ---
 
@@ -432,13 +551,20 @@ pytest tests/ -v
 - [x] Deterministic evaluators (BLEU, ROUGE, regex, JSON schema, latency)
 - [x] LLM-as-judge with QAG scoring
 - [x] Agent trace evaluators (tool call accuracy, plan quality)
+- [x] Agent trajectory efficiency + necessity scoring
+- [x] Multi-session agent memory evaluation
 - [x] Conversation evaluators
+- [x] PII detection (local, zero API calls)
+- [x] Schema validation (Pydantic + JSON Schema)
+- [x] Compliance audit trail (EU AI Act / NIST AI RMF)
+- [x] Wilson score confidence intervals on pass rates
+- [x] Minimum test cases calculator (`runs_needed`)
 - [x] Parallel + async runners
 - [x] CLI (`multivon-eval run`, `multivon-eval report`)
 - [ ] HTML report export
 - [ ] Pytest plugin (`@eval_case` decorator)
-- [ ] Model comparison mode — diff two models on same cases
-- [ ] Eval versioning — track scores over time
+- [ ] Tiered eval cost optimizer (heuristic → local model → frontier)
+- [ ] Agent simulation / adversarial user testing
 
 ---
 
