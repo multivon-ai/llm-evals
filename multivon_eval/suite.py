@@ -154,6 +154,15 @@ class EvalSuite:
         if verbose:
             print_report(report)
 
+        # Auto-save outputs when CLI flags are injected via env vars
+        import os as _os
+        if html_path := _os.environ.get("MULTIVON_HTML_OUTPUT"):
+            report.save_html(html_path)
+            print(f"  HTML report saved → {html_path}")
+        if json_path := _os.environ.get("MULTIVON_JSON_OUTPUT"):
+            report.save_json(json_path)
+            print(f"  JSON report saved → {json_path}")
+
         if fail_threshold is not None and report.pass_rate < fail_threshold:
             raise SystemExit(
                 f"\nEval failed: pass rate {report.pass_rate:.1%} < threshold {fail_threshold:.1%}"

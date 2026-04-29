@@ -16,8 +16,17 @@ import argparse
 
 
 def cmd_run(args):
+    import os
     import runpy
-    runpy.run_path(args.file, run_name="__main__")
+    if args.html:
+        os.environ["MULTIVON_HTML_OUTPUT"] = args.html
+    if args.json:
+        os.environ["MULTIVON_JSON_OUTPUT"] = args.json
+    try:
+        runpy.run_path(args.file, run_name="__main__")
+    finally:
+        os.environ.pop("MULTIVON_HTML_OUTPUT", None)
+        os.environ.pop("MULTIVON_JSON_OUTPUT", None)
 
 
 def cmd_report(args):
@@ -48,6 +57,12 @@ def cmd_report(args):
             color = "green" if score >= 0.7 else "yellow" if score >= 0.5 else "red"
             t.add_row(name, f"[{color}]{score:.3f}[/]")
         console.print(t)
+
+    if args.html:
+        from .result import EvalReport
+        report = EvalReport.from_dict(data)
+        report.save_html(args.html)
+        console.print(f"\n  HTML report saved → [dim]{args.html}[/]")
 
 
 def cmd_experiments(args):
@@ -126,10 +141,13 @@ def main():
     # run
     run_p = sub.add_parser("run", help="Execute an eval file")
     run_p.add_argument("file", help="Python eval file to run")
+    run_p.add_argument("--html", metavar="PATH", help="Save HTML report to PATH")
+    run_p.add_argument("--json", metavar="PATH", help="Save JSON report to PATH")
 
     # report
     report_p = sub.add_parser("report", help="Display a saved JSON report")
     report_p.add_argument("file", help="JSON results file")
+    report_p.add_argument("--html", metavar="PATH", help="Also save an HTML report to PATH")
 
     # experiments
     exp_p = sub.add_parser("experiments", help="Manage experiment history")
