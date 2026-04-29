@@ -127,6 +127,49 @@ class EvalReport:
                 totals.setdefault(r.evaluator, []).append(r.passed)
         return {k: sum(v) / len(v) for k, v in totals.items()}
 
+    @classmethod
+    def from_dict(cls, data: dict) -> "EvalReport":
+        """Reconstruct an EvalReport from the dict produced by to_json()."""
+        case_results = []
+        for c in data.get("cases", []):
+            results = [
+                EvalResult(
+                    evaluator=e["name"],
+                    score=e["score"],
+                    passed=e["passed"],
+                    reason=e.get("reason", ""),
+                )
+                for e in c.get("evaluators", [])
+            ]
+            cr = CaseResult(
+                case_input=c["input"],
+                actual_output=c["output"],
+                results=results,
+                latency_ms=c.get("latency_ms", 0.0),
+                tags=c.get("tags", []),
+                runs=c.get("runs", 1),
+                all_scores=[],
+                pass_count=-1,
+            )
+            # Restore multi-run state from stored fields
+            runs = c.get("runs", 1)
+            if runs > 1:
+                rpr = c.get("run_pass_rate", 1.0)
+                cr.pass_count = round(rpr * runs)
+                # Reconstruct all_scores from score and score_std if available
+                score = c.get("score", 0.0)
+                std = c.get("score_std", 0.0)
+                if std > 0:
+                    cr.all_scores = [score + std, score - std] + [score] * max(0, runs - 2)
+                else:
+                    cr.all_scores = [score] * runs
+            case_results.append(cr)
+        return cls(
+            suite_name=data.get("suite", ""),
+            model_id=data.get("model", ""),
+            case_results=case_results,
+        )
+
     def to_json(self) -> str:
         def _ser(obj):
             if hasattr(obj, "__dataclass_fields__"):
@@ -179,6 +222,16 @@ class EvalReport:
     def save_json(self, path: str) -> None:
         with open(path, "w") as f:
             f.write(self.to_json())
+
+    def to_html(self) -> str:
+        """Return a self-contained HTML report string."""
+        from .reporters.html import to_html as _to_html
+        return _to_html(self)
+
+    def save_html(self, path: str) -> None:
+        """Write the HTML report to path."""
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(self.to_html())
 
     def save_csv(self, path: str) -> None:
         rows = []
