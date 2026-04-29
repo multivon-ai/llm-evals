@@ -20,6 +20,7 @@ from .conversation import (
     ConversationRelevance, KnowledgeRetention,
     ConversationCompleteness, TurnConsistency,
 )
+from .consistency import SelfConsistency
 
 __all__ = [
     # Deterministic
@@ -39,4 +40,6 @@ __all__ = [
     # Conversation
     "ConversationRelevance", "KnowledgeRetention",
     "ConversationCompleteness", "TurnConsistency",
+    # Consistency
+    "SelfConsistency",
 ]

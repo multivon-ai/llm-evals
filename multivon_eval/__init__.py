@@ -50,6 +50,8 @@ from .evaluators import (
     # Conversation
     ConversationRelevance, KnowledgeRetention,
     ConversationCompleteness, TurnConsistency,
+    # Consistency
+    SelfConsistency,
 )
 
 __all__ = [
@@ -80,4 +82,6 @@ __all__ = [
     # Conversation
     "ConversationRelevance", "KnowledgeRetention",
     "ConversationCompleteness", "TurnConsistency",
+    # Consistency
+    "SelfConsistency",
 ]
