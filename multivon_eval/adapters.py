@@ -124,6 +124,93 @@ class OpenAIAdapter(ModelAdapter):
         return response.choices[0].message.content or ""
 
 
+class LiteLLMAdapter(ModelAdapter):
+    """
+    Adapter for LiteLLM — covers 100+ providers with one interface.
+
+    Use this instead of writing a custom adapter for Azure OpenAI, AWS Bedrock,
+    Google Vertex AI, Ollama, Groq, or any other provider LiteLLM supports.
+
+    Install: pip install 'multivon-eval[litellm]'
+
+    Args:
+        model:          LiteLLM model string. Format varies by provider:
+                        "gpt-4o"                               → OpenAI
+                        "claude-opus-4-7"                      → Anthropic
+                        "azure/gpt-4o"                         → Azure OpenAI
+                        "bedrock/anthropic.claude-3-sonnet-…"  → AWS Bedrock
+                        "vertex_ai/gemini-1.5-pro"             → Google Vertex
+                        "ollama/llama3.2"                      → Local Ollama
+                        "groq/llama-3.1-70b-versatile"         → Groq
+        system_prompt:  Optional system message prepended to every call.
+        temperature:    Sampling temperature (default 0.0 for determinism).
+        max_tokens:     Max output tokens (default 1024).
+        **kwargs:       Provider-specific kwargs forwarded to litellm.completion():
+                        api_base, api_key, api_version, etc.
+
+    Examples:
+
+        # Azure OpenAI
+        LiteLLMAdapter(
+            "azure/gpt-4o",
+            api_base="https://my-deployment.openai.azure.com",
+            api_key=os.environ["AZURE_API_KEY"],
+            api_version="2024-02-01",
+        )
+
+        # AWS Bedrock (uses boto3 credentials from env/~/.aws)
+        LiteLLMAdapter("bedrock/anthropic.claude-3-sonnet-20240229-v1:0")
+
+        # Local Ollama
+        LiteLLMAdapter("ollama/llama3.2", api_base="http://localhost:11434")
+
+    Subclass to customise prompt construction:
+
+        class InstructAdapter(LiteLLMAdapter):
+            def _build_messages(self, input: str) -> list[dict]:
+                return [{"role": "user", "content": f"### Instruction\\n{input}\\n### Response"}]
+    """
+
+    def __init__(
+        self,
+        model: str,
+        *,
+        system_prompt: str = "",
+        temperature: float = 0.0,
+        max_tokens: int = 1024,
+        **kwargs: Any,
+    ) -> None:
+        self.model = model
+        self._system_prompt = system_prompt
+        self._temperature = temperature
+        self._max_tokens = max_tokens
+        self._extra = kwargs
+
+    def _build_messages(self, input: str) -> list[dict[str, str]]:
+        messages = []
+        if self._system_prompt:
+            messages.append({"role": "system", "content": self._system_prompt})
+        messages.append({"role": "user", "content": input})
+        return messages
+
+    def __call__(self, input: str) -> str:
+        try:
+            import litellm
+        except ImportError:
+            raise ImportError(
+                "litellm is required for LiteLLMAdapter: "
+                "pip install 'multivon-eval[litellm]'"
+            )
+        response = litellm.completion(
+            model=self.model,
+            messages=self._build_messages(input),
+            temperature=self._temperature,
+            max_tokens=self._max_tokens,
+            **self._extra,
+        )
+        return response.choices[0].message.content or ""
+
+
 class AnthropicAdapter(ModelAdapter):
     """
     Adapter for the Anthropic Python client (anthropic>=0.20).

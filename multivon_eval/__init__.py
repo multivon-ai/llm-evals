@@ -28,7 +28,7 @@ __version__ = "0.4.0"
 from .suite import EvalSuite
 from .case import EvalCase, AgentStep, ToolCall
 from .judge import JudgeConfig, configure
-from .adapters import ModelAdapter, OpenAIAdapter, AnthropicAdapter
+from .adapters import ModelAdapter, OpenAIAdapter, AnthropicAdapter, LiteLLMAdapter
 from .integrations import (
     AgentTracer, CaseImporter,
     ManualTracer, LangChainTracer,
@@ -69,7 +69,7 @@ __all__ = [
     "__version__",
     "EvalSuite", "EvalCase", "AgentStep", "ToolCall",
     "JudgeConfig", "configure",
-    "ModelAdapter", "OpenAIAdapter", "AnthropicAdapter",
+    "ModelAdapter", "OpenAIAdapter", "AnthropicAdapter", "LiteLLMAdapter",
     # Integrations
     "AgentTracer", "CaseImporter",
     "ManualTracer", "LangChainTracer",

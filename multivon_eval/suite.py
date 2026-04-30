@@ -309,6 +309,69 @@ class EvalSuite:
             **run_kwargs,
         )
 
+    def run_with_litellm(
+        self,
+        model: str,
+        *,
+        system_prompt: str = "",
+        temperature: float = 0.0,
+        max_tokens: int = 1024,
+        **run_kwargs: "Any",
+    ) -> EvalReport:
+        """
+        Run evals against any LiteLLM-supported provider.
+
+        Covers 100+ providers (Azure, Bedrock, Vertex, Ollama, Groq, …) without
+        writing a custom adapter. Requires: pip install 'multivon-eval[litellm]'
+
+        Args:
+            model:         LiteLLM model string, e.g. "azure/gpt-4o",
+                           "bedrock/anthropic.claude-3-sonnet-…", "ollama/llama3.2".
+            system_prompt: System message prepended to every call.
+            temperature:   Sampling temperature (default 0.0).
+            max_tokens:    Max output tokens (default 1024).
+            **run_kwargs:  Forwarded to suite.run() (verbose, workers, runs, …).
+                           Provider-specific kwargs (api_base, api_key, …) are
+                           also forwarded to litellm.completion().
+
+        Examples:
+
+            # Azure OpenAI
+            report = suite.run_with_litellm(
+                "azure/gpt-4o",
+                api_base="https://my-deployment.openai.azure.com",
+                api_key=os.environ["AZURE_API_KEY"],
+                api_version="2024-02-01",
+            )
+
+            # AWS Bedrock
+            report = suite.run_with_litellm(
+                "bedrock/anthropic.claude-3-sonnet-20240229-v1:0"
+            )
+
+            # Local Ollama
+            report = suite.run_with_litellm(
+                "ollama/llama3.2", api_base="http://localhost:11434"
+            )
+        """
+        from .adapters import LiteLLMAdapter
+
+        # Split run_kwargs from litellm-specific kwargs (api_base, api_key, etc.)
+        _run_keys = {"verbose", "fail_threshold", "workers", "runs", "tracer", "early_stop"}
+        adapter_kwargs = {k: v for k, v in run_kwargs.items() if k not in _run_keys}
+        suite_kwargs = {k: v for k, v in run_kwargs.items() if k in _run_keys}
+
+        return self.run(
+            LiteLLMAdapter(
+                model,
+                system_prompt=system_prompt,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                **adapter_kwargs,
+            ),
+            **suite_kwargs,
+        )
+
     def run_on_cases(
         self,
         traced_outputs: list[tuple[EvalCase, str]],
