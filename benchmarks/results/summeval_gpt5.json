@@ -1,0 +1,22 @@
+{
+  "judge": "openai/gpt-5",
+  "n_requested": 100,
+  "results": {
+    "coherence": {
+      "rho": 0.1573,
+      "p": 0.1148,
+      "n": 100
+    },
+    "relevance": {
+      "rho": 0.1076,
+      "p": 0.2841,
+      "n": 100
+    },
+    "faithfulness": {
+      "rho": 0.0,
+      "p": 1.0,
+      "n": 100
+    }
+  },
+  "errors": 0
+}
