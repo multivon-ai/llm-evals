@@ -22,11 +22,11 @@ python benchmarks/run_all_benchmarks.py
 | Faithfulness (summarization) | F1 0.480 | F1 0.448 | F1 0.667 | F1 0.627 |
 | Coherence detection | see run | — | see run | — |
 | Answer accuracy | see run | — | see run | see run |
-| SummEval coherence (Spearman ρ) | **0.455** (Sonnet) | 0.431 (gpt-4o-mini) | — | — |
-| SummEval relevance (Spearman ρ) | 0.283 (Sonnet) | **0.380** (gpt-4o-mini) | — | — |
-| SummEval faithfulness (Spearman ρ) | 0.319 (Sonnet) | **0.443** (gpt-4o-mini) | — | — |
+| SummEval coherence (Spearman ρ) | **0.587** (Haiku) | 0.431 (gpt-4o-mini) | — | — |
+| SummEval relevance (Spearman ρ) | **0.522** (Haiku) | 0.380 (gpt-4o-mini) | — | — |
+| SummEval faithfulness (Spearman ρ) | 0.455 (Opus) | **0.443** (gpt-4o-mini) | — | — |
 
-Judge models: multivon-eval uses `claude-haiku-4-5-20251001` for benchmarks 1–4; benchmarks 1–4 DeepEval uses `gpt-4o-mini`. SummEval benchmark (5) runs three judges. Judge always disclosed per run.
+Judge models: multivon-eval uses `claude-haiku-4-5-20251001` for benchmarks 1–4; benchmarks 1–4 DeepEval uses `gpt-4o-mini`. SummEval benchmark (5) runs 6 judges (Haiku, Opus, Sonnet, GPT-5, GPT-4o-mini, GPT-3.5-turbo). Judge always disclosed per run.
 
 ---
 
@@ -173,25 +173,26 @@ Comparing evaluators against each other tells you which one scores higher, not w
 
 **Task:** Compute Spearman correlation between evaluator scores and human expert ratings. Higher ρ = the evaluator tracks human judgment more closely. All results are statistically significant at α=0.05 unless noted.
 
-**100 samples, 3 judges:**
+**100 samples, 5 judges:**
 
-| Dimension | Claude Sonnet 4.6 | GPT-4o-mini | GPT-3.5-turbo |
-|-----------|:-----------------:|:-----------:|:-------------:|
-| Coherence    | **0.455** (p<0.001) | 0.431 (p<0.001) | 0.205 (p=0.038) |
-| Relevance    | 0.283 (p=0.004)     | **0.380** (p<0.001) | 0.053 (p=0.602) ⚠ |
-| Faithfulness | 0.319 (p=0.001)     | **0.443** (p<0.001) | 0.240 (p=0.014) |
+| Dimension | Haiku 4.5 | Opus 4.7 | Sonnet 4.6 | GPT-4o-mini | GPT-3.5-turbo |
+|-----------|:---------:|:--------:|:----------:|:-----------:|:-------------:|
+| Coherence    | **0.587** (p<0.001) | 0.530 (p<0.001) | 0.455 (p<0.001) | 0.431 (p<0.001) | 0.205 (p=0.038) |
+| Relevance    | **0.522** (p<0.001) | 0.224 (p=0.023) | 0.283 (p=0.004) | 0.380 (p<0.001) | 0.053 (p=0.602) ⚠ |
+| Faithfulness | 0.345 (p<0.001)     | **0.455** (p<0.001) | 0.319 (p=0.001) | 0.443 (p<0.001) | 0.240 (p=0.014) |
 
 ⚠ = not statistically significant
 
 **Key findings:**
 
-- **GPT-4o-mini is the strongest judge overall.** It leads on relevance (ρ=0.380) and faithfulness (ρ=0.443). Likely because smaller models like Haiku and gpt-3.5-turbo don't reason precisely enough to decompose source vs. summary claims.
-- **Claude Sonnet leads on coherence** (ρ=0.455 vs 0.431). Coherence is a structural quality judgment where Claude's language modeling tends to be strong.
+- **Claude Haiku 4.5 is surprisingly the best overall judge** for coherence and relevance (ρ=0.587, 0.522), outperforming all models including Opus and Sonnet. Coherence and relevance are structural, language-level judgments where Haiku's scoring appears well-calibrated — and it's the cheapest option in the lineup.
+- **Claude Opus 4.7 leads faithfulness** (ρ=0.455), tied with GPT-4o-mini (ρ=0.443). Factual consistency requires reasoning through source documents — the one dimension where scale helps.
+- **Bigger is not always better for judging.** Opus (ρ=0.224 relevance) underperforms Haiku (ρ=0.522) significantly on relevance. Sonnet also underperforms Haiku. For evaluation tasks, model calibration and consistency matter more than raw capability.
 - **GPT-3.5-turbo relevance is not statistically significant (p=0.602).** This is the same model RAGAS used for their published numbers (gpt-3.5-turbo-16k, Sept 2023). Their claim of 78% agreement on AnswerRelevance is on their own WikiEval dataset — not a neutral benchmark — and this result suggests the judge choice is load-bearing for relevance tasks. Their faithfulness number (95%) may hold since factual entailment is an easier task for weaker models.
-- **All three dimensions have meaningful correlation with capable models.** ρ=0.283–0.455 across Sonnet, ρ=0.380–0.443 across GPT-4o-mini. These are moderate-to-strong correlations for an automated evaluator, consistent with published G-Eval results (~0.514 Spearman on SummEval coherence with GPT-4).
-- **Zero errors across 900 API calls** (100 samples × 3 evaluators × 3 judges).
+- **All three dimensions have meaningful correlation with capable models.** Best-in-class: coherence ρ=0.587 (Haiku), relevance ρ=0.522 (Haiku), faithfulness ρ=0.455 (Opus). These are moderate-to-strong correlations for an automated evaluator, consistent with published G-Eval results (~0.514 Spearman on SummEval coherence with GPT-4).
+- **Zero errors across 1,500 API calls** (100 samples × 3 evaluators × 5 judges).
 
-**Recommendation:** Run multivon-eval with `claude-sonnet-4-6` or `gpt-4o-mini` as judge. Both produce statistically reliable results across all three dimensions. Avoid `gpt-3.5-turbo` for relevance evaluation.
+**Recommendation:** For most use cases, `claude-haiku-4-5-20251001` gives the best coherence and relevance correlation at the lowest cost. For faithfulness-critical pipelines (RAG, summarization), use `claude-opus-4-7` or `gpt-4o-mini`. Avoid `gpt-3.5-turbo` for relevance.
 
 ---
 

@@ -68,7 +68,7 @@ def _qag_eval(
     for question, expect_yes in questions:
         prompt = f"{context_prompt}\n\nQuestion: {question}\nAnswer with only \"Yes\" or \"No\"."
         try:
-            answer = _call(prompt, judge, max_tokens=10)
+            answer = _call(prompt, judge, max_tokens=100)
             got_yes = _parse_yes_no(answer)
             passed = got_yes == expect_yes
             results.append(passed)
@@ -118,7 +118,7 @@ class Faithfulness(Evaluator):
                 answer = _call(
                     f"Context:\n{context}\n\nClaim: {claim}\n\n"
                     f"Is this claim fully supported by the context? Answer with only \"Yes\" or \"No\".",
-                    judge, max_tokens=10,
+                    judge, max_tokens=100,
                 )
                 supported = _parse_yes_no(answer)
                 verified.append(supported)
@@ -331,7 +331,7 @@ class ContextPrecision(Evaluator):
                 answer = _call(
                     f"Question: {case.input}\n\nContext chunk:\n{chunk}\n\n"
                     f"Is this context chunk relevant and useful for answering the question? Answer \"Yes\" or \"No\".",
-                    judge, max_tokens=10,
+                    judge, max_tokens=100,
                 )
                 relevant = _parse_yes_no(answer)
                 results.append(relevant)

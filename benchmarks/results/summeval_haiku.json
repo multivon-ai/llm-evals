@@ -1,0 +1,22 @@
+{
+  "judge": "anthropic/claude-haiku-4-5-20251001",
+  "n_requested": 100,
+  "results": {
+    "coherence": {
+      "rho": 0.587,
+      "p": 0.0,
+      "n": 100
+    },
+    "relevance": {
+      "rho": 0.5218,
+      "p": 0.0,
+      "n": 100
+    },
+    "faithfulness": {
+      "rho": 0.3452,
+      "p": 0.0003,
+      "n": 100
+    }
+  },
+  "errors": 0
+}

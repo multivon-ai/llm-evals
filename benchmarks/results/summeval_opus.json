@@ -1,0 +1,22 @@
+{
+  "judge": "anthropic/claude-opus-4-7",
+  "n_requested": 100,
+  "results": {
+    "coherence": {
+      "rho": 0.5301,
+      "p": 0.0,
+      "n": 100
+    },
+    "relevance": {
+      "rho": 0.2237,
+      "p": 0.0231,
+      "n": 100
+    },
+    "faithfulness": {
+      "rho": 0.4547,
+      "p": 0.0,
+      "n": 100
+    }
+  },
+  "errors": 0
+}
