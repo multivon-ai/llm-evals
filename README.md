@@ -606,9 +606,11 @@ EvalSuite.run(model_fn)
 
 | File | What it shows |
 |------|--------------|
-| [`basic_eval.py`](examples/basic_eval.py) | Deterministic evaluators, no LLM judge |
-| [`rag_eval.py`](examples/rag_eval.py) | Faithfulness + hallucination for RAG systems |
-| [`ci_eval.py`](examples/ci_eval.py) | CI/CD integration with pass threshold |
+| [`basic_eval.py`](examples/basic_eval.py) | Deterministic evaluators only — zero API cost, instant sanity check |
+| [`rag_eval.py`](examples/rag_eval.py) | Faithfulness + hallucination for RAG pipelines |
+| [`ci_eval.py`](examples/ci_eval.py) | CI/CD integration — `fail_threshold` exits 1 on regression |
+| [`check_eval.py`](examples/check_eval.py) | `add_check()` — write criteria in English, no evaluator class needed |
+| [`agent_eval.py`](examples/agent_eval.py) | Agent tool call accuracy with `ManualTracer` — surfaces flaky tool selection |
 
 ---
 

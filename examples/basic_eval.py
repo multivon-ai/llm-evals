@@ -1,13 +1,15 @@
 """
 Basic eval — deterministic evaluators, no LLM judge needed.
+Zero API cost. Run this as a sanity check on any model.
 """
 from dotenv import load_dotenv
 load_dotenv()
 
 import anthropic
-from llm_evals import EvalSuite, EvalCase, ExactMatch, Contains, NotEmpty, WordCount
+from multivon_eval import EvalSuite, EvalCase, ExactMatch, NotEmpty, WordCount, RegexMatch
 
 client = anthropic.Anthropic()
+
 
 def my_model(prompt: str) -> str:
     response = client.messages.create(
@@ -20,27 +22,37 @@ def my_model(prompt: str) -> str:
 
 cases = [
     EvalCase(
-        input="What is 2 + 2?",
+        input="What is 2 + 2? Reply with just the number.",
         expected_output="4",
         tags=["math"],
     ),
     EvalCase(
-        input="Name three primary colors.",
+        input="Name three primary colors. Reply with a comma-separated list.",
         tags=["knowledge"],
     ),
     EvalCase(
         input="Write a one-sentence description of photosynthesis.",
         tags=["science"],
     ),
+    EvalCase(
+        input="What is the capital of France? One word only.",
+        expected_output="Paris",
+        tags=["geography"],
+    ),
 ]
 
-suite = EvalSuite("Basic Deterministic Eval", model_id="claude-haiku")
+suite = EvalSuite("Basic Deterministic Eval", model_id="claude-haiku-4-5")
 suite.add_cases(cases)
 suite.add_evaluators(
     NotEmpty(),
-    WordCount(min_words=1, max_words=200),
-    Contains(substrings=["4"], threshold=1.0),   # only applies to first case conceptually
+    WordCount(min_words=1, max_words=100),
 )
+
+# Per-case evaluators: add ExactMatch only to cases with expected_output
+for case in cases:
+    if case.expected_output:
+        suite.add_evaluators(ExactMatch())
+        break
 
 report = suite.run(my_model)
 report.save_json("eval_results.json")

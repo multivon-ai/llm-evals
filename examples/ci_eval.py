@@ -2,7 +2,7 @@
 CI/CD eval — exits with code 1 if pass rate drops below threshold.
 Add to your GitHub Actions workflow to catch regressions before they ship.
 
-Example GitHub Actions step:
+GitHub Actions step:
   - name: Run LLM evals
     run: python examples/ci_eval.py
     env:
@@ -11,10 +11,12 @@ Example GitHub Actions step:
 from dotenv import load_dotenv
 load_dotenv()
 
+import sys
 import anthropic
-from llm_evals import EvalSuite, load, NotEmpty, Relevance, WordCount
+from multivon_eval import EvalSuite, load, NotEmpty, Relevance, WordCount
 
 client = anthropic.Anthropic()
+
 
 def model(prompt: str) -> str:
     response = client.messages.create(
@@ -25,7 +27,8 @@ def model(prompt: str) -> str:
     return response.content[0].text
 
 
-# Load test cases from a dataset file
+# Load pinned test cases — a snapshot file gives reproducible CI runs.
+# Commit qa_sample.jsonl to your repo so the case set is stable across runs.
 cases = load("examples/datasets/qa_sample.jsonl")
 
 suite = EvalSuite("CI Regression Eval", model_id="claude-haiku")
@@ -35,7 +38,13 @@ suite.add_evaluators(
     WordCount(min_words=2, max_words=500),
     Relevance(threshold=0.6),
 )
+suite.add_check("Response should directly answer the question asked")
+suite.add_check("Response should not contain placeholder or error text")
 
-# fail_threshold=0.8 means: exit(1) if fewer than 80% of cases pass
+# fail_threshold=0.8 → exit(1) if fewer than 80% of cases pass
 report = suite.run(model, fail_threshold=0.8)
 report.save_json("ci_eval_results.json")
+
+if not report.passed:
+    print(f"\nCI FAILED — pass rate {report.pass_rate:.1%} below threshold 80%", file=sys.stderr)
+    sys.exit(1)
