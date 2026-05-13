@@ -125,7 +125,10 @@ class JudgeCache:
             with self._connect() as conn:
                 conn.execute(self._SCHEMA)
                 conn.execute("PRAGMA journal_mode=WAL")
-        except OSError as exc:
+        except (OSError, sqlite3.Error) as exc:
+            # Catch sqlite3 errors (read-only mounts, corrupt DB, locking
+            # failures) alongside OS errors. Callers reach JudgeCache via
+            # the contract that CacheError signals an unusable store.
             raise CacheError(f"Cannot initialise judge cache at {self.db_path}: {exc}") from exc
 
     def _connect(self) -> sqlite3.Connection:
