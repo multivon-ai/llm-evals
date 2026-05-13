@@ -54,6 +54,9 @@ Documentation = "https://evaldocs.multivon.ai"
 [project.scripts]
 multivon-eval = "multivon_eval.cli:main"
 
+[project.entry-points."pytest11"]
+multivon_eval = "multivon_eval.pytest_plugin"
+
 [tool.setuptools.packages.find]
 include = ["multivon_eval*"]
 
