@@ -12,7 +12,9 @@ from .evaluators.deterministic import Latency, MaxLatency
 from .reporters.terminal import print_report
 
 if TYPE_CHECKING:
+    from pathlib import Path
     from .integrations.base import AgentTracer
+    from .lockfile import SuiteLock
 
 
 class EvalSuite:
@@ -53,6 +55,48 @@ class EvalSuite:
     def add_evaluators(self, *evaluators: Evaluator) -> "EvalSuite":
         self._evaluators.extend(evaluators)
         return self
+
+    def lock(self) -> "SuiteLock":
+        """Return a content-addressed fingerprint of this suite.
+
+        See :mod:`multivon_eval.lockfile` for the schema. The lock is
+        cheap to compute and useful for CI:
+
+            saved = SuiteLock.from_json(Path("suite.lock").read_text())
+            suite.verify_lock(saved)  # raises LockMismatch if anything drifted
+
+        Use this to catch silent prompt updates, judge model swaps, or
+        dataset changes that would otherwise invalidate historical
+        comparisons.
+        """
+        from .lockfile import build_suite_lock
+        return build_suite_lock(self)
+
+    def write_lock(self, path: "str | Path") -> "Path":
+        """Save the current lock to ``path``. Returns the resolved Path."""
+        from pathlib import Path as _P
+        out = _P(path)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(self.lock().to_json(), encoding="utf-8")
+        return out
+
+    def verify_lock(self, saved: "SuiteLock | str | Path") -> None:
+        """Raise :class:`LockMismatch` if the current suite has drifted.
+
+        ``saved`` can be a :class:`SuiteLock` instance, a JSON string,
+        or a path to a saved lock file.
+        """
+        from pathlib import Path as _P
+        from .lockfile import SuiteLock, verify_suite_against_lock
+        if isinstance(saved, SuiteLock):
+            lock = saved
+        elif isinstance(saved, (str, _P)) and _P(str(saved)).exists():
+            lock = SuiteLock.from_json(_P(str(saved)).read_text(encoding="utf-8"))
+        elif isinstance(saved, str):
+            lock = SuiteLock.from_json(saved)
+        else:
+            raise TypeError(f"verify_lock: unsupported argument {type(saved).__name__}")
+        verify_suite_against_lock(self, lock)
 
     def add_check(
         self,

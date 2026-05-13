@@ -47,6 +47,13 @@ from .exceptions import (
     MultivonError, JudgeUnavailable, CalibrationMissing,
     EvaluatorPrereqMissing, CacheError, SecretsError, ComplianceError,
 )
+from .lockfile import (
+    SuiteLock, EvaluatorFingerprint, LockMismatch,
+    build_suite_lock, fingerprint_evaluator, verify_suite_against_lock,
+)
+from .costs import Costs, CostTracker, ProviderUsage, ModelPricing, register_pricing
+from .audit_package import build_audit_package
+from .pytest_plugin import assert_evaluators, EvaluatorFailure
 from .secrets import (
     SecretsResolver, EnvResolver, ChainedResolver, StaticResolver,
     get_secret, set_resolver, get_resolver, reset_resolver,
