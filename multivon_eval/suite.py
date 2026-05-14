@@ -1322,7 +1322,10 @@ def _aggregate_runs(case: EvalCase, single_runs: list[CaseResult]) -> CaseResult
     """Merge N single-run CaseResults into one aggregated CaseResult."""
     n = len(single_runs)
     all_scores = [cr.score for cr in single_runs]
-    pass_count = sum(1 for cr in single_runs if all(r.passed for r in cr.results))
+    # Count a run as passing ONLY if its CaseResult.passed agrees — that
+    # property already encodes the EvalStatus rule (error/skipped states
+    # are NOT passes even if individual evaluator results show passed=True).
+    pass_count = sum(1 for cr in single_runs if cr.passed)
     avg_latency = sum(cr.latency_ms for cr in single_runs) / n
 
     # Aggregate per-evaluator scores (mean score, majority-vote passed)
@@ -1393,7 +1396,10 @@ def _sprt_stop(runs_so_far: list[CaseResult], alpha: float = 0.05, beta: float =
     beta:  false-negative rate (default 0.20 → 80% power)
     """
     import math as _math
-    passes = sum(1 for cr in runs_so_far if all(r.passed for r in cr.results))
+    # Use CaseResult.passed (status-aware) — error/skipped runs are not
+    # "successes" for SPRT termination even if evaluators happened to record
+    # passed=True before the error fired.
+    passes = sum(1 for cr in runs_so_far if cr.passed)
     n = len(runs_so_far)
     if n < 2:
         return False

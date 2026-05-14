@@ -609,8 +609,22 @@ def _print_comparison(a: RunRecord, b: RunRecord) -> None:
     _row("Pass rate", a.pass_rate, b.pass_rate, "%")
     _row("Avg score", a.avg_score, b.avg_score, "f")
     _row("Total cases", a.total, b.total)
+    # 0.7.0: pass_rate uses `evaluated` as denominator. Surface both
+    # numbers so "no pass-rate change" doesn't hide a doubling of error
+    # cases. Legacy records default evaluated=-1; show "?" in that case.
+    eval_a = a.evaluated if a.evaluated >= 0 else None
+    eval_b = b.evaluated if b.evaluated >= 0 else None
+    _row("Evaluated", eval_a if eval_a is not None else "?",
+                      eval_b if eval_b is not None else "?")
+    _row("Errors", a.errors, b.errors)
     _row("Passed", a.passed, b.passed)
     _row("Failed", a.failed, b.failed)
+    if a.errors != b.errors:
+        delta_err = b.errors - a.errors
+        sign = "+" if delta_err > 0 else ""
+        print(f"  Note: error count changed by {sign}{delta_err} — infrastructure problem? "
+              f"a transient judge / model outage looks identical to a quality regression "
+              f"in earlier versions.")
 
     if a.runs_per_case > 1 or b.runs_per_case > 1:
         _row("Runs/case", a.runs_per_case, b.runs_per_case)
