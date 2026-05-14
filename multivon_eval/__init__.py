@@ -99,6 +99,7 @@ from .evaluators import (
     NotEmpty, ExactMatch, Contains, RegexMatch,
     JSONSchemaEval, WordCount, Latency, MaxLatency,
     BLEU, ROUGE, StartsWith, BERTScore,
+    Levenshtein, ChrfScore,
     # LLM-as-judge (QAG)
     Faithfulness, Hallucination, Relevance, Coherence,
     Toxicity, Bias, Summarization, AnswerAccuracy,
@@ -160,6 +161,7 @@ __all__ = [
     "NotEmpty", "ExactMatch", "Contains", "RegexMatch",
     "JSONSchemaEval", "WordCount", "Latency", "MaxLatency",
     "BLEU", "ROUGE", "StartsWith", "BERTScore",
+    "Levenshtein", "ChrfScore",
     # LLM-as-judge
     "Faithfulness", "Hallucination", "Relevance", "Coherence",
     "Toxicity", "Bias", "Summarization", "AnswerAccuracy",
