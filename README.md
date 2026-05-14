@@ -22,6 +22,10 @@ Runs a self-contained demo eval. LLM-judge evaluators are added automatically if
 ```python
 from multivon_eval import EvalSuite, EvalCase
 
+# Your model — any str → str callable (real LLM, API client, anything).
+def my_model_fn(input: str) -> str:
+    return your_llm.generate(input)  # replace with your call
+
 suite = EvalSuite("Support Bot Eval")
 suite.add_check("Response explains how to resolve the issue")
 suite.add_check("Tone is professional and not defensive", threshold=0.8)
