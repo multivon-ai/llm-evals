@@ -22,12 +22,14 @@ from .conversation import (
     ConversationCompleteness, TurnConsistency,
 )
 from .consistency import SelfConsistency
+from .text_metrics import Levenshtein, ChrfScore
 
 __all__ = [
     # Deterministic
     "NotEmpty", "ExactMatch", "Contains", "RegexMatch",
     "JSONSchemaEval", "WordCount", "Latency", "MaxLatency",
     "BLEU", "ROUGE", "StartsWith", "BERTScore",
+    "Levenshtein", "ChrfScore",
     # LLM-as-judge
     "Faithfulness", "Hallucination", "Relevance", "Coherence",
     "Toxicity", "Bias", "Summarization", "AnswerAccuracy",
