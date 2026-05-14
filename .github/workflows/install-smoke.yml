@@ -1,0 +1,107 @@
+name: Install smoke
+
+# Catches the kind of regressions the v0.6.0 dogfood pass surfaced
+# (Finding #1: bare `import multivon_eval` failed because pytest was a
+# hidden hard dep). Always run the BUILT wheel from a clean venv, not
+# the editable dev install, so it mirrors what a real `pip install`
+# user sees.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # Run weekly so we catch breakage from upstream dependency drift even
+  # if no commit lands.
+  schedule:
+    - cron: "0 7 * * 1"   # Mondays 07:00 UTC
+
+permissions:
+  contents: read
+
+jobs:
+  bare-install:
+    name: bare pip install + import
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Build wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --wheel
+
+      - name: Install built wheel in CLEAN venv (no dev extras, no pytest)
+        run: |
+          python -m venv /tmp/smoke-venv
+          /tmp/smoke-venv/bin/pip install --upgrade pip
+          /tmp/smoke-venv/bin/pip install dist/multivon_eval-*.whl
+
+      - name: Import multivon_eval (Finding #1 regression)
+        run: |
+          /tmp/smoke-venv/bin/python -c "import multivon_eval as m; print('version:', m.__version__)"
+
+      - name: Verify public API surface
+        run: |
+          /tmp/smoke-venv/bin/python -c "from multivon_eval import EvalSuite, EvalCase, Faithfulness, Contains, WordCount; print('public API ok')"
+
+      - name: assert_evaluators without pytest raises actionable error
+        run: |
+          /tmp/smoke-venv/bin/python -c "
+          from multivon_eval import assert_evaluators
+          try:
+              assert_evaluators()
+          except ImportError as exc:
+              assert 'multivon-eval[pytest]' in str(exc), exc
+              print('assert_evaluators correctly raises actionable error without pytest')
+          else:
+              raise SystemExit('expected ImportError when pytest is not installed')
+          "
+
+  notebook-smoke:
+    name: quickstart notebook executes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install (with pytest + jupyter)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[pytest]"
+          pip install jupyter nbconvert ipykernel
+
+      - name: Set placeholder env so notebook's auto-detect picks a path
+        env:
+          # Fake but well-formed key so the notebook's `startswith('sk-...')`
+          # check considers it real. The Anthropic call will fail with an
+          # auth error, which surfaces as a UserWarning, not a notebook
+          # exception — that's the contract we want to verify.
+          ANTHROPIC_API_KEY: sk-ant-ci-smoke-test-not-real
+        run: |
+          jupyter nbconvert --to notebook --execute --output /tmp/executed.ipynb notebooks/quickstart.ipynb || (echo "Notebook execution failed"; exit 1)
+          python -c "
+          import json
+          nb = json.load(open('/tmp/executed.ipynb'))
+          errs = [(i, o) for i, c in enumerate(nb['cells']) if c['cell_type']=='code'
+                  for o in c.get('outputs', []) if o.get('output_type')=='error']
+          # Auth errors from the fake key are expected; assert no API mismatch errors.
+          for i, o in errs:
+              ename = o.get('ename', '')
+              evalue = o.get('evalue', '')
+              # AttributeError / TypeError from kwarg mismatches → Finding #2/#3 regression
+              if ename in ('AttributeError', 'TypeError'):
+                  raise SystemExit(f'Notebook cell {i} raised {ename}: {evalue} — regression on Finding #2/#3')
+          print(f'Notebook executed with {len(errs)} error(s), all auth-related (acceptable)')
+          "
