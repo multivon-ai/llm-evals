@@ -272,3 +272,102 @@ def test_pytest_plugin_import_only_swallows_missing_pytest():
     src = open(m.__file__).read()
     # Either narrow to ModuleNotFoundError + name check, OR re-raise on non-pytest
     assert ("ModuleNotFoundError" in src and "_exc.name" in src) or "raise" in src
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 0.6.2 borrow: assert_budget() — Promptfoo-style cost/latency gating
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _stub_report(*, total: int = 4, latencies: list[float] | None = None,
+                 total_cost_usd: float | None = 0.10, total_tokens: int = 1000):
+    """Build a minimal EvalReport for budget-gate testing."""
+    from multivon_eval.result import EvalReport, CaseResult, EvalResult
+    from multivon_eval.costs import Costs, ProviderUsage
+    if latencies is None:
+        latencies = [100.0] * total
+
+    case_results = []
+    for i in range(total):
+        cr = CaseResult(
+            case_input=f"q{i}",
+            actual_output="ans",
+            latency_ms=latencies[i],
+            results=[EvalResult(evaluator="stub", score=1.0, passed=True, reason="ok")],
+            runs=1,
+        )
+        case_results.append(cr)
+
+    costs = Costs(by_model=[
+        ProviderUsage(
+            provider="openai", model="gpt-4o-mini",
+            input_tokens=total_tokens // 2, output_tokens=total_tokens // 2,
+            calls=total, cost_usd=total_cost_usd,
+        )
+    ])
+    return EvalReport(suite_name="budget-test", case_results=case_results, costs=costs)
+
+
+def test_assert_budget_passes_when_under_all_limits():
+    report = _stub_report(total=4, latencies=[50.0, 60.0, 70.0, 80.0],
+                          total_cost_usd=0.04, total_tokens=200)
+    # All limits set generously — should not raise.
+    report.assert_budget(
+        max_total_cost_usd=1.00,
+        max_avg_cost_per_case_usd=0.50,
+        max_total_tokens=10_000,
+        max_avg_latency_ms=500.0,
+        max_p95_latency_ms=1000.0,
+    )
+
+
+def test_assert_budget_fails_on_total_cost():
+    import pytest
+    from multivon_eval import EvalGateFailure
+    report = _stub_report(total_cost_usd=0.50)
+    with pytest.raises(EvalGateFailure) as exc:
+        report.assert_budget(max_total_cost_usd=0.10)
+    assert "Total cost" in str(exc.value)
+
+
+def test_assert_budget_fails_on_p95_latency():
+    import pytest
+    from multivon_eval import EvalGateFailure
+    # 10 cases, last 5 are slow → idx = round(0.95*(10-1)) = 9, the slow tail.
+    report = _stub_report(total=10, latencies=[100.0]*5 + [5000.0]*5)
+    with pytest.raises(EvalGateFailure) as exc:
+        report.assert_budget(max_p95_latency_ms=1000.0)
+    assert "p95" in str(exc.value).lower()
+
+
+def test_assert_budget_aggregates_multiple_violations():
+    import pytest
+    from multivon_eval import EvalGateFailure
+    report = _stub_report(total=4, latencies=[200.0]*4, total_cost_usd=1.0, total_tokens=5000)
+    with pytest.raises(EvalGateFailure) as exc:
+        report.assert_budget(
+            max_total_cost_usd=0.10,
+            max_total_tokens=500,
+            max_avg_latency_ms=50.0,
+        )
+    msg = str(exc.value)
+    # All three violations should be in the message
+    assert "Total cost" in msg
+    assert "Total tokens" in msg
+    assert "Avg latency" in msg
+
+
+def test_assert_budget_no_pricing_data_surfaces_clear_error():
+    import pytest
+    from multivon_eval import EvalGateFailure
+    # cost_usd=None → no pricing
+    report = _stub_report(total_cost_usd=None)
+    with pytest.raises(EvalGateFailure) as exc:
+        report.assert_budget(max_total_cost_usd=0.10)
+    assert "pricing" in str(exc.value).lower()
+
+
+def test_assert_budget_with_no_limits_is_noop():
+    """If no thresholds are passed, assert_budget should not raise even on a
+    very expensive run. Defensive — users opt in per dimension."""
+    report = _stub_report(total_cost_usd=10_000.0, total_tokens=10**9)
+    report.assert_budget()  # should not raise
