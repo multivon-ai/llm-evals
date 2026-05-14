@@ -135,12 +135,18 @@ _TABLE: CalibrationTable | None = None
 def load_calibration(reload: bool = False) -> CalibrationTable:
     """Return the loaded calibration table (lazy, cached).
 
-    Pass ``reload=True`` to force a re-read from disk; primarily for tests
-    that mutate the file or want to test the loader directly.
+    Prefers ``v2.json`` when present in the shipped package data; falls
+    back to ``v1.json``. Pass ``reload=True`` to force a re-read from
+    disk; primarily for tests that mutate the file or want to test the
+    loader directly.
     """
     global _TABLE
     if _TABLE is None or reload:
-        _TABLE = _parse_table(_read_data_file("v1.json"))
+        # Try v2 first; the runtime accepts either schema version.
+        try:
+            _TABLE = _parse_table(_read_data_file("v2.json"))
+        except FileNotFoundError:
+            _TABLE = _parse_table(_read_data_file("v1.json"))
     return _TABLE
 
 
