@@ -39,6 +39,29 @@ ERROR_STATUSES = frozenset({
 })
 
 
+# Characters that XML 1.0 declares illegal in document content, even when
+# escaped. Strict parsers (most CI consumers) reject the whole document
+# if any of these appear. Strip them before they touch the XML serializer.
+_XML_INVALID_CHARS = "".join(
+    chr(c) for c in range(0x20)
+    if c not in (0x09, 0x0A, 0x0D)   # tab, newline, carriage return are allowed
+) + "￾￿"
+_XML_INVALID_TRANS = str.maketrans({c: "" for c in _XML_INVALID_CHARS})
+
+
+def _xml_safe(s: str) -> str:
+    """Return ``s`` with XML 1.0-invalid control characters removed.
+
+    Evaluator reasons can pull from agent traces, raw API errors, or
+    user output that occasionally contains \\x00 / \\x08 / etc. — those
+    would break a strict JUnit consumer downstream. Sanitizing once at
+    the serialization boundary keeps the XML well-formed.
+    """
+    if not isinstance(s, str):
+        s = str(s)
+    return s.translate(_XML_INVALID_TRANS)
+
+
 @dataclass
 class EvalResult:
     """Result of a single evaluator on a single case."""
@@ -638,6 +661,130 @@ class EvalReport:
         """Write the HTML report to path."""
         with open(path, "w", encoding="utf-8") as f:
             f.write(self.to_html())
+
+    def to_junit_xml(self) -> str:
+        """Render the report as JUnit XML.
+
+        GitHub Actions, GitLab CI, CircleCI, Jenkins, and most other CI
+        systems render JUnit XML natively in their PR/job summary UI —
+        producing one of these alongside the JSON report makes eval
+        failures show up in the CI's structured test panel.
+
+        Mapping (per JUnit conventions):
+          - Suite: the multivon-eval suite. One ``<testsuite>``.
+          - Test case: each (case, evaluator) pair. One ``<testcase>``.
+          - Pass/fail: a passing evaluator emits a bare ``<testcase>``;
+            a failing one (or a failed-quality case where no specific
+            evaluator was the proximate cause) emits ``<failure>``; an
+            error case (model crashed, judge unavailable) emits
+            ``<error>``; a deliberately skipped case emits ``<skipped>``.
+
+        The string returned is ready to drop into a CI artifact path
+        (e.g., ``junit.xml``).
+        """
+        from xml.etree.ElementTree import Element, SubElement, tostring
+
+        def _classify_row(cr: "CaseResult", r: "EvalResult | None") -> str:
+            """Return the JUnit verb for one (case, evaluator) row.
+
+            One of: 'passed', 'failed', 'errored', 'skipped'. Status
+            (the case-level outcome) dominates over the per-evaluator
+            passed flag — codex round-1 caught that an aggregate
+            FAILED_QUALITY case can have a passing per-evaluator row
+            from a multi-run majority vote; the JUnit consumer must
+            still see the case as a failure.
+            """
+            if cr.status == EvalStatus.SKIPPED:
+                return "skipped"
+            if cr.status in ERROR_STATUSES:
+                return "errored"
+            if cr.status == EvalStatus.FAILED_QUALITY:
+                # In a multi-run aggregate, the per-evaluator EvalResult.passed
+                # reflects the MAJORITY vote across runs. The case as a whole
+                # can still be FAILED_QUALITY (pass_count < runs) even if the
+                # majority on every evaluator was "passed". The CI consumer
+                # must still see a failure somewhere — codex round-1 caught
+                # the silent-pass bug. Emit failure on every row in this case.
+                return "failed"
+            return "passed"
+
+        rows: list[tuple[CaseResult, EvalResult | None, str]] = []
+        for cr in self.case_results:
+            # An error case with no evaluator results still emits one row so
+            # the CI sees the case at all.
+            for r in (cr.results or [None]):
+                rows.append((cr, r, _classify_row(cr, r)))
+
+        total_tests = len(rows)
+        n_failures = sum(1 for _, _, v in rows if v == "failed")
+        n_errors = sum(1 for _, _, v in rows if v == "errored")
+        n_skipped = sum(1 for _, _, v in rows if v == "skipped")
+        suite_time = sum(cr.latency_ms for cr in self.case_results) / 1000.0
+
+        ts = Element("testsuites")
+        suite_el = SubElement(ts, "testsuite", {
+            "name": _xml_safe(self.suite_name or "multivon-eval"),
+            "tests": str(total_tests),
+            "failures": str(n_failures),
+            "errors": str(n_errors),
+            "skipped": str(n_skipped),
+            "time": f"{suite_time:.3f}",
+        })
+
+        for cr, r, verb in rows:
+            classname = _xml_safe(self.suite_name or "multivon-eval")
+            ev_name = _xml_safe(r.evaluator) if r is not None else "(case-level)"
+            input_excerpt = _xml_safe((cr.case_input or "")[:80])
+            tc = SubElement(suite_el, "testcase", {
+                "classname": classname,
+                "name": f"{ev_name} :: {input_excerpt}",
+                "time": f"{cr.latency_ms / 1000.0:.3f}",
+            })
+
+            if verb == "passed":
+                continue
+            if verb == "skipped":
+                SubElement(tc, "skipped", {"message": "case marked skipped"})
+                continue
+            if verb == "errored":
+                detail = (
+                    cr.model_error or cr.judge_error or cr.evaluator_error or
+                    (r.reason if r is not None else "") or "error"
+                )
+                # ElementTree handles XML escaping on serialization; pass raw
+                # text. Pre-escaping it would double-encode and render
+                # &lt;script&gt; literally in CI output.
+                node = SubElement(tc, "error", {
+                    "type": cr.status.value,
+                    "message": _xml_safe(detail[:200] if detail else "error"),
+                })
+                node.text = _xml_safe(detail or "")
+                continue
+            # verb == "failed"
+            if r is not None and not r.passed:
+                msg = r.reason or "evaluator failed"
+                node = SubElement(tc, "failure", {
+                    "type": "quality",
+                    "message": _xml_safe(msg[:200]),
+                })
+                node.text = _xml_safe(r.reason or "")
+            else:
+                # Aggregate failed-quality case (no specific evaluator failed
+                # this row, but the case as a whole failed). Emit a failure
+                # so the CI surfaces it — otherwise the row looks passing
+                # while the suite-level failure count says otherwise.
+                node = SubElement(tc, "failure", {
+                    "type": "quality",
+                    "message": "case failed quality bar",
+                })
+                node.text = _xml_safe("case status=FAILED_QUALITY (aggregate)")
+
+        return '<?xml version="1.0" encoding="UTF-8"?>\n' + tostring(ts, encoding="unicode")
+
+    def save_junit_xml(self, path: str) -> None:
+        """Write the JUnit XML report to ``path``."""
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(self.to_junit_xml())
 
     def save_csv(self, path: str) -> None:
         rows = []
