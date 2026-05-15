@@ -289,7 +289,11 @@ def main():
     init_p.add_argument(
         "--template", "-t",
         default="rag",
-        choices=["quickstart", "rag", "agent", "conversation", "regulated"],
+        choices=[
+            "quickstart", "rag",
+            "agent", "agent-langgraph", "agent-openai-sdk",
+            "conversation", "regulated",
+        ],
         help="Which starter to generate (default: rag)",
     )
     init_p.add_argument(

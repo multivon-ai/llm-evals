@@ -33,6 +33,7 @@ from .integrations import (
     AgentTracer, CaseImporter,
     ManualTracer, LangChainTracer,
     LangSmithTracer, LangSmithImporter,
+    LangGraphTracer, OpenAIAgentsTracer,
 )
 from .dataset import load, load_jsonl, load_csv
 from .generate import generate_from_text, generate_from_file, generate_hallucination_pairs
@@ -133,6 +134,7 @@ __all__ = [
     "AgentTracer", "CaseImporter",
     "ManualTracer", "LangChainTracer",
     "LangSmithTracer", "LangSmithImporter",
+    "LangGraphTracer", "OpenAIAgentsTracer",
     "load", "load_jsonl", "load_csv",
     # Generation
     "generate_from_text", "generate_from_file", "generate_hallucination_pairs",

@@ -824,6 +824,516 @@ python eval.py
 """
 
 
+# ─────────────────────────────────────────────────────────────────────
+# agent-langgraph — real LangGraph agent with a graph-aware tracer
+# ─────────────────────────────────────────────────────────────────────
+
+
+_AGENT_LANGGRAPH_EVAL = '''\
+"""LangGraph agent eval — order-support agent with ToolCallAccuracy.
+
+A real LangGraph ReAct-style agent (LLM node + tools node + END), not a
+hand-rolled toy. ``LangGraphTracer`` listens to the graph's callback
+events and captures the trace as ``list[AgentStep]`` — one step per
+LLM turn, with tool calls grouped under the model decision that made
+them.
+
+NEEDS AN API KEY. LangGraph drives a real chat model. Set
+ANTHROPIC_API_KEY or OPENAI_API_KEY in your environment (or .env),
+or point ``ChatOpenAI(base_url=...)`` at a local Ollama / LM Studio
+server.
+"""
+import os
+from typing import Annotated
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+from langchain_core.messages import HumanMessage
+from langchain_core.tools import tool
+from langgraph.graph import StateGraph, START, END, MessagesState
+from langgraph.prebuilt import ToolNode, tools_condition
+
+from multivon_eval import EvalSuite, EvalCase, LangGraphTracer
+from multivon_eval.evaluators import ToolCallAccuracy
+
+
+def _chat_model():
+    """Pick whichever chat model the user has configured."""
+    if os.getenv("ANTHROPIC_API_KEY", "").startswith("sk-ant-"):
+        from langchain_anthropic import ChatAnthropic
+        return ChatAnthropic(model="claude-haiku-4-5", temperature=0)
+    if os.getenv("OPENAI_API_KEY", "").startswith("sk-"):
+        from langchain_openai import ChatOpenAI
+        return ChatOpenAI(model="gpt-4o-mini", temperature=0)
+    raise RuntimeError(
+        "No chat model configured. Set ANTHROPIC_API_KEY or OPENAI_API_KEY, "
+        "or edit _chat_model() to point at a local Ollama (ChatOpenAI with base_url=...)."
+    )
+
+
+# ── Tools ─────────────────────────────────────────────────────────────
+
+ORDERS = {
+    "O-101": {"status": "shipped", "total": 49.99, "refunded": False},
+    "O-202": {"status": "delivered", "total": 19.99, "refunded": True},
+    "O-303": {"status": "processing", "total": 79.99, "refunded": False},
+}
+
+
+@tool
+def lookup_order(order_id: str) -> dict:
+    """Look up an order by ID. Returns status, total, refund status."""
+    return ORDERS.get(order_id, {"error": "order not found"})
+
+
+@tool
+def refund_order(order_id: str) -> dict:
+    """Refund the given order. Refuses if already refunded or still processing."""
+    order = ORDERS.get(order_id)
+    if not order:
+        return {"error": "order not found"}
+    if order["refunded"]:
+        return {"error": "already refunded", "refund_id": None}
+    if order["status"] == "processing":
+        return {"error": "cannot refund a processing order", "refund_id": None}
+    return {"refund_id": f"R-{order_id}", "amount": order["total"], "status": "approved"}
+
+
+TOOLS = [lookup_order, refund_order]
+
+
+# ── Build the graph ──────────────────────────────────────────────────
+
+def _build_graph():
+    """Standard ReAct: model decides → tools (optional) → model again → END."""
+    llm = _chat_model().bind_tools(TOOLS)
+
+    def call_model(state: MessagesState) -> dict:
+        return {"messages": [llm.invoke(state["messages"])]}
+
+    graph = StateGraph(MessagesState)
+    graph.add_node("agent", call_model)
+    graph.add_node("tools", ToolNode(TOOLS))
+    graph.add_edge(START, "agent")
+    graph.add_conditional_edges("agent", tools_condition)
+    graph.add_edge("tools", "agent")
+    return graph.compile()
+
+
+# ── Wire to multivon-eval ────────────────────────────────────────────
+
+GRAPH = _build_graph()
+TRACER = LangGraphTracer()
+
+
+def support_agent(input_text: str, **kwargs) -> str:
+    """Suite-compatible signature. Forwards callbacks so the tracer
+    captures the LangGraph callback events."""
+    result = GRAPH.invoke(
+        {"messages": [HumanMessage(content=input_text)]},
+        config={"callbacks": kwargs.get("callbacks", [])},
+    )
+    return result["messages"][-1].content
+
+
+# Five cases that exercise framework value — not just the happy path.
+cases = [
+    EvalCase(
+        input="Where is order O-101?",
+        expected_tool_calls=["lookup_order"],
+    ),
+    EvalCase(
+        input="Refund order O-101.",
+        expected_tool_calls=["lookup_order", "refund_order"],
+    ),
+    EvalCase(
+        input="Refund order O-202.",
+        # Already refunded — well-behaved agent looks BEFORE attempting
+        # to refund again. We accept either trajectory (look only, or
+        # look + try-refund-which-fails).
+        expected_tool_calls=["lookup_order"],
+    ),
+    EvalCase(
+        input="Where is order O-999?",
+        # Nonexistent order — agent should look it up, get "not found",
+        # and stop. Don't call refund_order.
+        expected_tool_calls=["lookup_order"],
+    ),
+    EvalCase(
+        input="Status of O-303 and refund it if possible.",
+        # Processing — model should look up, see processing, NOT refund.
+        expected_tool_calls=["lookup_order"],
+    ),
+]
+
+
+suite = EvalSuite("langgraph-support-agent")
+suite.add_cases(cases)
+# ``penalize_unexpected=True`` makes the negative cases (e.g. already
+# refunded, processing) actually fail when the agent calls refund_order
+# anyway. Without it, ToolCallAccuracy only checks "did the expected
+# tools fire" and ignores extras — a real false-positive risk.
+suite.add_evaluator(ToolCallAccuracy(penalize_unexpected=True))
+
+
+if __name__ == "__main__":
+    import os
+    report = suite.run(support_agent, tracer=TRACER)
+    os.makedirs("eval-reports", exist_ok=True)
+    report.save_json("eval-reports/langgraph-agent.json")
+    print(f"Saved report to eval-reports/langgraph-agent.json")
+    print(f"  multivon-eval view eval-reports/langgraph-agent.json   # interactive HTML")
+'''
+
+
+_AGENT_LANGGRAPH_README = """\
+# multivon-eval — LangGraph agent template
+
+Evaluate a real LangGraph ReAct agent with `ToolCallAccuracy`.
+`LangGraphTracer` hooks into the graph's LangChain callbacks and
+captures the trace as one `AgentStep` per LLM turn.
+
+## 3-command flow
+
+```bash
+pip install -r requirements.txt
+cp .env.example .env   # add ANTHROPIC_API_KEY or OPENAI_API_KEY
+python eval.py
+```
+
+## How the tracer wires in
+
+The crucial bit is **forwarding callbacks** to LangGraph. Your
+`model_fn` must accept `**kwargs` and pass `kwargs.get("callbacks", [])`
+into the graph's invoke config:
+
+```python
+def support_agent(input_text: str, **kwargs) -> str:
+    result = GRAPH.invoke(
+        {"messages": [HumanMessage(content=input_text)]},
+        config={"callbacks": kwargs.get("callbacks", [])},
+    )
+    return result["messages"][-1].content
+```
+
+The suite calls `tracer.instrument(support_agent)`, which injects the
+tracer's callback handler into `kwargs["callbacks"]`. Forget the
+`**kwargs` and the trace will be silently empty — flagged by
+``ToolCallAccuracy`` failing every case.
+
+## What this template demonstrates
+
+- **Real LangGraph graph** — `StateGraph` + `MessagesState` + `ToolNode` + `tools_condition`. No hand-rolled toy loop.
+- **`LangGraphTracer`** — extends our LangChain integration with
+  graph-node awareness. Tool calls inside a `tools` node are attached
+  to the *preceding* LLM turn's `AgentStep`, which matches how
+  agent eval frameworks model decisions.
+- **Five cases** exercising real agent value:
+  1. Simple lookup
+  2. Lookup → refund (multi-step)
+  3. Already-refunded order (agent should refuse a redundant refund)
+  4. Nonexistent order (agent should NOT call refund after a not-found)
+  5. Processing order (refund should NOT fire on a non-refundable state)
+- **No `fail_threshold`** — this is a starter, not a hardened CI gate.
+  Add it when your judge setup is reliable.
+
+## Migrating from `multivon-eval init -t agent`
+
+The toy `agent` template uses a hand-rolled tracer; this one uses
+`LangGraphTracer` against a real graph. Evaluators and case schema
+(`expected_tool_calls`) are **100% compatible** — just:
+
+1. Replace `HandRolledTracer` with `LangGraphTracer`.
+2. Add `**kwargs` to your `model_fn` signature and forward
+   `kwargs.get("callbacks", [])` to your graph's `config={"callbacks": ...}`.
+3. Build a real `StateGraph` instead of populating `steps: list[AgentStep]`
+   by hand.
+
+## Glossary
+
+- `StateGraph` — LangGraph's graph builder. Nodes are functions; edges
+  are routing rules.
+- `MessagesState` — a built-in state schema that holds a `messages: list`.
+- `ToolNode` — a prebuilt node that executes any tool calls in the last
+  AI message and appends results to `messages`.
+- `tools_condition` — a prebuilt routing function: if the last AI
+  message has tool calls, go to the tools node; otherwise END.
+- `HumanMessage` — a LangChain message type for user input.
+
+## Next steps
+
+- Add `TaskCompletion` (LLM-judge) to score the final answer, not just
+  the tool trajectory.
+- Add `TrajectoryEfficiency` to flag agents that meander.
+- For multi-agent handoffs: file an issue with your graph shape —
+  v1 of the tracer is single-agent.
+"""
+
+
+_AGENT_LANGGRAPH_REQS = """\
+multivon-eval[langgraph]>=0.7.0
+# Choose ONE chat model lib (delete the others):
+langchain-anthropic>=0.3.0
+langchain-openai>=0.3.0
+# Or use a local Ollama by editing eval.py's _chat_model().
+"""
+
+
+_AGENT_LANGGRAPH_DOTENV = """\
+# Pick ONE of these — leave the others commented or unset.
+ANTHROPIC_API_KEY=sk-ant-...
+# OPENAI_API_KEY=sk-...
+"""
+
+
+# ─────────────────────────────────────────────────────────────────────
+# agent-openai-sdk — OpenAI Agents SDK agent with post-hoc trace
+# ─────────────────────────────────────────────────────────────────────
+
+
+_AGENT_OPENAI_SDK_EVAL = '''\
+"""OpenAI Agents SDK eval — order-support agent.
+
+A real ``agents.Agent`` driven by ``Runner.run_sync``. ``OpenAIAgentsTracer``
+reads the trace from ``RunResult.new_items`` after each run — no global
+trace processor, no shared state across cases.
+
+NEEDS AN OPENAI API KEY. The Agents SDK uses OpenAI by default. Set
+OPENAI_API_KEY in your environment (or .env).
+"""
+import os
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+from agents import Agent, Runner, function_tool
+
+from multivon_eval import EvalSuite, EvalCase, OpenAIAgentsTracer
+from multivon_eval.evaluators import ToolCallAccuracy
+
+
+def _check_key():
+    """Defer the OPENAI_API_KEY check to runtime so users can still
+    `python -c "import eval"` and read the file without a key."""
+    if not os.getenv("OPENAI_API_KEY", "").startswith("sk-"):
+        raise RuntimeError(
+            "OpenAI Agents SDK needs OPENAI_API_KEY. Set it in .env or your "
+            "shell (export OPENAI_API_KEY=sk-...), then re-run."
+        )
+
+
+# ── Tools (function_tool decorator registers them with the SDK) ──────
+
+ORDERS = {
+    "O-101": {"status": "shipped", "total": 49.99, "refunded": False},
+    "O-202": {"status": "delivered", "total": 19.99, "refunded": True},
+    "O-303": {"status": "processing", "total": 79.99, "refunded": False},
+}
+
+
+@function_tool
+def lookup_order(order_id: str) -> dict:
+    """Look up an order by ID. Returns status, total, refund status."""
+    return ORDERS.get(order_id, {"error": "order not found"})
+
+
+@function_tool
+def refund_order(order_id: str) -> dict:
+    """Refund the given order. Refuses if already refunded or processing."""
+    order = ORDERS.get(order_id)
+    if not order:
+        return {"error": "order not found"}
+    if order["refunded"]:
+        return {"error": "already refunded", "refund_id": None}
+    if order["status"] == "processing":
+        return {"error": "cannot refund a processing order", "refund_id": None}
+    return {"refund_id": f"R-{order_id}", "amount": order["total"], "status": "approved"}
+
+
+# ── Agent ────────────────────────────────────────────────────────────
+
+support_agent_sdk = Agent(
+    name="OrderSupport",
+    instructions=(
+        "You are a customer support agent. Look up orders before any "
+        "refund action. Do not refund orders that are already refunded "
+        "or still processing — report the situation to the user instead."
+    ),
+    tools=[lookup_order, refund_order],
+    model="gpt-4o-mini",
+)
+
+
+# ── Wire to multivon-eval ────────────────────────────────────────────
+
+TRACER = OpenAIAgentsTracer()
+
+
+def support_agent(input_text: str) -> str:
+    """Suite-compatible signature. Captures the trace post-hoc from
+    the SDK's RunResult — no shared state with other cases."""
+    result = Runner.run_sync(support_agent_sdk, input_text)
+    TRACER.capture(result)
+    return result.final_output
+
+
+cases = [
+    EvalCase(
+        input="Where is order O-101?",
+        expected_tool_calls=["lookup_order"],
+    ),
+    EvalCase(
+        input="Refund order O-101.",
+        expected_tool_calls=["lookup_order", "refund_order"],
+    ),
+    EvalCase(
+        input="Refund order O-202.",
+        expected_tool_calls=["lookup_order"],
+    ),
+    EvalCase(
+        input="Where is order O-999?",
+        expected_tool_calls=["lookup_order"],
+    ),
+    EvalCase(
+        input="Status of O-303 and refund it if possible.",
+        expected_tool_calls=["lookup_order"],
+    ),
+]
+
+
+suite = EvalSuite("openai-agents-support")
+suite.add_cases(cases)
+# ``penalize_unexpected=True`` makes the negative cases (already
+# refunded, processing) actually fail when the agent calls refund_order
+# anyway. Without it, an over-eager agent could refund both
+# already-refunded AND processing orders and still score 100%.
+suite.add_evaluator(ToolCallAccuracy(penalize_unexpected=True))
+
+
+if __name__ == "__main__":
+    import os
+    _check_key()
+    report = suite.run(support_agent, tracer=TRACER)
+    os.makedirs("eval-reports", exist_ok=True)
+    report.save_json("eval-reports/openai-agents.json")
+    print(f"Saved report to eval-reports/openai-agents.json")
+    print(f"  multivon-eval view eval-reports/openai-agents.json   # interactive HTML")
+'''
+
+
+_AGENT_OPENAI_SDK_README = """\
+# multivon-eval — OpenAI Agents SDK template
+
+Evaluate a real `agents.Agent` driven by `Runner.run_sync`.
+`OpenAIAgentsTracer` reads `RunResult.new_items` after the run —
+no global trace processor, no leakage across concurrent cases.
+
+## 3-command flow
+
+```bash
+pip install -r requirements.txt
+cp .env.example .env   # add OPENAI_API_KEY
+python eval.py
+```
+
+## How the tracer wires in
+
+`OpenAIAgentsTracer` is **post-hoc**: it reads `RunResult.new_items`
+after the SDK's `Runner` finishes. You MUST call `tracer.capture(result)`
+inside your `model_fn`, BEFORE returning the string output. Forget
+this step and the trace will be empty:
+
+```python
+def support_agent(input_text: str) -> str:
+    result = Runner.run_sync(support_agent_sdk, input_text)
+    TRACER.capture(result)        # <-- required
+    return result.final_output
+```
+
+The suite has no way to unwrap a `RunResult` itself — capture
+explicitly.
+
+## What this template demonstrates
+
+- **Real `agents.Agent`** — `function_tool`-decorated tools, instructions,
+  `Runner.run_sync`. No hand-rolled loop.
+- **`OpenAIAgentsTracer.capture(result)`** — post-hoc parse of the
+  SDK's `RunResult.new_items` into our `AgentStep` model. One step
+  per LLM turn; adjacent reasoning + message items merge into one
+  step; tool calls and outputs reconcile by `call_id`.
+- **Five cases** with non-trivial trajectories:
+  1. Simple lookup
+  2. Lookup → refund (multi-step)
+  3. Already-refunded order (agent should refuse)
+  4. Nonexistent order
+  5. Processing order (refund should NOT fire)
+
+## Live RunHooks variant (optional)
+
+For event-time tracing (cancel on guardrail, stream into another
+sink), use `tracer.run_hooks()` and `tracer.merge(hooks)` after the
+async run. The hooks instance has its OWN buffer — safe for
+concurrent runs:
+
+```python
+hooks = TRACER.run_hooks()
+result = await Runner.run(support_agent_sdk, input_text, hooks=hooks)
+TRACER.merge(hooks)
+return result.final_output
+```
+
+Use the post-hoc `capture()` path unless you have a specific need to
+intercept events live.
+
+## Glossary
+
+- `Agent` — the SDK's agent class. Defines instructions, tools, model.
+- `function_tool` — a decorator that turns a Python function into a
+  tool the agent can call. Schema is inferred from type hints.
+- `Runner.run_sync(agent, input)` — runs the agent loop synchronously
+  and returns a `RunResult`. Use `Runner.run(...)` for async.
+- `RunResult.new_items` — the SDK's structured trace: a list of
+  `MessageOutputItem`, `ReasoningItem`, `ToolCallItem`, `ToolCallOutputItem`,
+  etc. This is what `tracer.capture(result)` reads.
+- `RunResult.final_output` — the agent's final string output.
+
+## Migrating from `multivon-eval init -t agent`
+
+If you started with the toy `agent` template and now want to use the
+real OpenAI Agents SDK:
+
+1. Replace `HandRolledTracer` with `OpenAIAgentsTracer`.
+2. Wrap your agent in `Runner.run_sync(...)` and call
+   `TRACER.capture(result)` inside `model_fn`.
+3. Cases (`expected_tool_calls`) stay the same.
+
+## Next steps
+
+- Add `TaskCompletion` to score the final answer (needs an LLM judge).
+- Add `TrajectoryEfficiency` for meandering detection.
+- Handoffs are captured as markers in `step.output` but not yet
+  expanded into sub-trace AgentSteps — file an issue if you need
+  full handoff expansion.
+"""
+
+
+_AGENT_OPENAI_SDK_REQS = """\
+multivon-eval[openai-agents]>=0.7.0
+"""
+
+
+_AGENT_OPENAI_SDK_DOTENV = """\
+OPENAI_API_KEY=sk-...
+"""
+
+
 TEMPLATES: dict[str, dict[str, str]] = {
     "quickstart": {
         "eval.py": _QUICKSTART_EVAL,
@@ -845,6 +1355,20 @@ TEMPLATES: dict[str, dict[str, str]] = {
         ".env.example": _DOTENV_EXAMPLE,
         ".gitignore": _GITIGNORE,
     },
+    "agent-langgraph": {
+        "eval.py": _AGENT_LANGGRAPH_EVAL,
+        "README.md": _AGENT_LANGGRAPH_README,
+        "requirements.txt": _AGENT_LANGGRAPH_REQS,
+        ".env.example": _AGENT_LANGGRAPH_DOTENV,
+        ".gitignore": _GITIGNORE,
+    },
+    "agent-openai-sdk": {
+        "eval.py": _AGENT_OPENAI_SDK_EVAL,
+        "README.md": _AGENT_OPENAI_SDK_README,
+        "requirements.txt": _AGENT_OPENAI_SDK_REQS,
+        ".env.example": _AGENT_OPENAI_SDK_DOTENV,
+        ".gitignore": _GITIGNORE,
+    },
     "conversation": {
         "eval.py": _CONVERSATION_EVAL,
         "README.md": _CONVERSATION_README,
@@ -864,7 +1388,11 @@ TEMPLATES: dict[str, dict[str, str]] = {
 
 def list_templates() -> list[str]:
     """Return the available template names in display order."""
-    return ["quickstart", "rag", "agent", "conversation", "regulated"]
+    return [
+        "quickstart", "rag",
+        "agent", "agent-langgraph", "agent-openai-sdk",
+        "conversation", "regulated",
+    ]
 
 
 def render(template: str, *, with_ci: str | None = None) -> dict[str, str]:
