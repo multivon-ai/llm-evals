@@ -50,7 +50,16 @@ class CaseDiff:
         Status-state changes within "error space" (e.g. judge_error
         → evaluator_error) count as ``unchanged`` for direction, but
         callers can still inspect the underlying statuses.
+
+        SKIPPED on either side is treated as ``unchanged`` for the
+        direction, because the case was deliberately not evaluated on
+        at least one side — we don't have signal about whether the
+        model behavior changed. Codex round-1 finding (otherwise
+        skipped→pass would be reported as an improvement, which is
+        misleading).
         """
+        if self.baseline_status == EvalStatus.SKIPPED or self.proposal_status == EvalStatus.SKIPPED:
+            return _UNCHANGED
         b_pass = self.baseline_status == EvalStatus.PASSED
         p_pass = self.proposal_status == EvalStatus.PASSED
         if b_pass == p_pass:
@@ -298,31 +307,36 @@ def _pair_by_input(
     the same input they get paired 1-1-1 in occurrence order — this
     matches what an operator means when they rerun the same prompt
     twice in a suite.
+
+    Tracks consumption by POSITIONAL INDEX (not ``id()``) so a list
+    that happens to contain the same ``CaseResult`` object twice (e.g.
+    ``cases = [cr] * 3``) still pairs all three occurrences. Codex
+    round-1 finding.
     """
-    by_input_b: dict[str, list[CaseResult]] = defaultdict(list)
-    for cr in baseline_cases:
-        by_input_b[cr.case_input].append(cr)
+    by_input_b: dict[str, list[int]] = defaultdict(list)
+    for idx, cr in enumerate(baseline_cases):
+        by_input_b[cr.case_input].append(idx)
 
     paired: list[tuple[CaseResult, CaseResult]] = []
     added: list[CaseResult] = []
-    consumed_b: set[int] = set()  # ids of CaseResults paired so far
+    consumed_b: set[int] = set()  # baseline indices already paired
     for p_cr in proposal_cases:
         bucket = by_input_b.get(p_cr.case_input, [])
-        match = None
-        for b_cr in bucket:
-            if id(b_cr) in consumed_b:
+        match_idx = None
+        for b_idx in bucket:
+            if b_idx in consumed_b:
                 continue
-            match = b_cr
-            consumed_b.add(id(b_cr))
+            match_idx = b_idx
+            consumed_b.add(b_idx)
             break
-        if match is None:
+        if match_idx is None:
             added.append(p_cr)
         else:
-            paired.append((match, p_cr))
+            paired.append((baseline_cases[match_idx], p_cr))
 
     removed: list[CaseResult] = []
-    for b_cr in baseline_cases:
-        if id(b_cr) not in consumed_b:
+    for idx, b_cr in enumerate(baseline_cases):
+        if idx not in consumed_b:
             removed.append(b_cr)
     return paired, added, removed
 
@@ -352,10 +366,20 @@ def compare_reports(baseline: EvalReport, proposal: EvalReport) -> ReportDiff:
             proposal_score=p_cr.score,
         ))
 
-    if paired_diffs:
+    # Exclude paired-but-skipped cases from McNemar — a skipped case
+    # on either side is a deliberate "not evaluated," not a failure.
+    # Counting them as False would falsely inflate the discordant-pair
+    # count toward "regression" or "improvement" depending on the
+    # other side. Codex round-1 finding.
+    mcnemar_pairs = [
+        d for d in paired_diffs
+        if d.baseline_status != EvalStatus.SKIPPED
+        and d.proposal_status != EvalStatus.SKIPPED
+    ]
+    if mcnemar_pairs:
         mcnemar_p = mcnemar_test(
-            [d.baseline_status == EvalStatus.PASSED for d in paired_diffs],
-            [d.proposal_status == EvalStatus.PASSED for d in paired_diffs],
+            [d.baseline_status == EvalStatus.PASSED for d in mcnemar_pairs],
+            [d.proposal_status == EvalStatus.PASSED for d in mcnemar_pairs],
         )
     else:
         mcnemar_p = None

@@ -345,6 +345,69 @@ def test_cli_missing_file_returns_2(tmp_path, capsys):
 # Integration: invoke through `multivon-eval compare`
 # ─────────────────────────────────────────────────────────────────────────────
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Codex round-1 regressions
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_pair_by_input_handles_aliased_objects():
+    """Codex ISSUE 1: tracking consumption by ``id()`` broke when the
+    same CaseResult object appeared more than once (e.g. ``[cr] * 3``).
+    Switched to positional index — all aliased occurrences now pair.
+    """
+    shared = _case("X", score=0.5)
+    base = [shared, shared, shared]
+    prop = [_case("X", score=0.7), _case("X", score=0.8), _case("X", score=0.9)]
+    paired, added, removed = _pair_by_input(base, prop)
+    assert len(paired) == 3, "all three aliased occurrences must pair"
+    assert added == []
+    assert removed == []
+
+
+def test_skipped_pair_is_unchanged_not_regressed_or_improved():
+    """Codex ISSUE 2: skipped on either side is not the same as a quality
+    failure. Direction must be 'unchanged' so skipped→pass doesn't show
+    up as an improvement (which would falsely tell the user the model
+    got better when in fact the case wasn't evaluated before)."""
+    sk = CaseDiff("x", EvalStatus.SKIPPED, EvalStatus.PASSED, 0.0, 1.0)
+    assert sk.direction == "unchanged"
+    sk2 = CaseDiff("x", EvalStatus.PASSED, EvalStatus.SKIPPED, 1.0, 0.0)
+    assert sk2.direction == "unchanged"
+
+
+def test_mcnemar_excludes_skipped_pairs(monkeypatch):
+    """If every paired case has SKIPPED on one side, McNemar has no
+    valid pairs to test → returns None, NOT 1.0 (which would mean
+    'tested and found no difference')."""
+    base = _report("a", [
+        _case("x", passed=False),  # skipped on baseline
+    ])
+    # Force SKIPPED status on the baseline case (the helper doesn't expose it).
+    base.case_results[0].skipped = True
+    prop = _report("b", [_case("x", passed=True)])
+    d = compare_reports(base, prop)
+    assert d.mcnemar_p is None
+
+
+def test_mcnemar_still_runs_on_mixed_skipped_and_paired():
+    """A mix of skipped and real pairs should still produce a McNemar
+    p-value from the REAL pairs only."""
+    base = _report("a", [
+        _case("x", passed=True),
+        _case("y", passed=False),
+        _case("z", passed=True),  # skipped, excluded
+    ])
+    base.case_results[2].skipped = True
+    prop = _report("b", [
+        _case("x", passed=True),
+        _case("y", passed=True),
+        _case("z", passed=True),
+    ])
+    d = compare_reports(base, prop)
+    assert d.mcnemar_p is not None
+    # The non-skipped pair "y" went False→True — one discordant pair
+    # out of two non-skipped paired cases.
+
+
 def test_cli_subcommand_works_end_to_end(tmp_path):
     """The top-level CLI dispatches 'compare' to the compare submodule.
     Run the real binary to make sure argparse + dispatch wiring is intact."""
