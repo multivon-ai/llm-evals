@@ -188,3 +188,83 @@ def test_provenance_handles_synthetic_report_without_suite_lock(tmp_path: Path):
     prov = rec["provenance"]
     assert "package_version" in prov
     assert "suite_lock" not in prov   # absent — synthetic report
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Codex round-2 regressions: dirty-tree marker, suite_lock_status, evaluator
+# config in the fingerprint.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_provenance_records_git_dirty_marker(tmp_path: Path):
+    """When the package is in a git workspace, the audit record must
+    include package_git_dirty (True/False) so the auditor knows whether
+    the SHA fully describes the running code. Codex caught the gap that
+    HEAD-only could point at non-reproducible code."""
+    suite = _build_real_suite()
+    report = suite.run(lambda i: f"answer for {i}", verbose=False)
+    reporter = ComplianceReporter(str(tmp_path / "dirty"), framework="none", verbose=False)
+    reporter.record(report)
+    rec = json.loads((tmp_path / "dirty" / "prov-test-suite.audit.ndjson").read_text().strip())
+    prov = rec["provenance"]
+    if "package_git_sha" in prov:
+        # Only assertable when we're inside a git workspace.
+        assert "package_git_dirty" in prov
+        assert isinstance(prov["package_git_dirty"], bool)
+
+
+def test_provenance_surfaces_lock_status_for_synthetic_report(tmp_path: Path):
+    """A report without a suite_lock (synthetic / replayed) must record
+    suite_lock_status='absent' so the auditor sees the lock is missing
+    intentionally, not silently dropped. Codex M3."""
+    report = EvalReport(
+        suite_name="synth",
+        case_results=[CaseResult(case_input="x", actual_output="y",
+                                  results=[EvalResult("ev", 1.0, True)])],
+    )
+    reporter = ComplianceReporter(str(tmp_path / "synth"), framework="none", verbose=False)
+    reporter.record(report)
+    rec = json.loads((tmp_path / "synth" / "synth.audit.ndjson").read_text().strip())
+    prov = rec["provenance"]
+    assert prov.get("suite_lock_status") == "absent"
+    assert "suite_lock" not in prov
+
+
+def test_suite_lock_distinguishes_evaluator_config_changes():
+    """Codex high finding: SuiteLock missed evaluator config knobs like
+    `WordCount.min_words` and `Contains.substrings`. Two suites with the
+    same evaluators but different config MUST hash differently."""
+    suite_a = EvalSuite("config-cmp")
+    suite_a.add_cases([EvalCase(input="x")])
+    suite_a.add_evaluators(WordCount(min=1, max=10))
+
+    suite_b = EvalSuite("config-cmp")
+    suite_b.add_cases([EvalCase(input="x")])
+    suite_b.add_evaluators(WordCount(min=1, max=999))
+
+    lock_a = suite_a.lock()
+    lock_b = suite_b.lock()
+    assert lock_a.suite_hash != lock_b.suite_hash, (
+        "different WordCount config must produce different suite_hash"
+    )
+    # The per-evaluator extra.config dict captures the difference.
+    cfg_a = (lock_a.evaluators[0].extra or {}).get("config", {})
+    cfg_b = (lock_b.evaluators[0].extra or {}).get("config", {})
+    assert cfg_a.get("max_words") != cfg_b.get("max_words")
+
+
+def test_suite_lock_diff_surfaces_config_changes():
+    """When the diff() output explains why two locks disagree, it must
+    mention the changed config knob — otherwise audit-replay debugging
+    is opaque."""
+    from multivon_eval import Contains
+    a = EvalSuite("d")
+    a.add_cases([EvalCase(input="x")])
+    a.add_evaluators(Contains(["alpha"]))
+
+    b = EvalSuite("d")
+    b.add_cases([EvalCase(input="x")])
+    b.add_evaluators(Contains(["beta"]))
+
+    diffs = a.lock().diff(b.lock())
+    # At least one diff line must mention the config change.
+    assert any("substrings" in d for d in diffs), f"diff didn't surface config change: {diffs}"
