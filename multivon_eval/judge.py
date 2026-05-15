@@ -160,10 +160,73 @@ def _is_retryable(exc: Exception) -> bool:
     return type(exc).__name__ in _RETRYABLE_EXC_NAMES
 
 
+_AUTH_HINT_EXC_NAMES = {
+    "AuthenticationError",     # OpenAI / Anthropic
+    "PermissionDeniedError",   # Anthropic
+    "BadRequestError",         # often "no auth"
+    "APIConnectionError",      # local server down
+    "APIError",                # generic — still likely missing env
+    "ConnectError",            # httpx
+    "ConnectionError",
+}
+
+
+def _looks_like_auth_or_connection_error(exc: Exception) -> bool:
+    name = type(exc).__name__
+    if name in _AUTH_HINT_EXC_NAMES:
+        return True
+    msg = str(exc).lower()
+    return any(
+        sig in msg for sig in
+        ("api_key", "api key", "unauthorized", "401", "missing", "not found",
+         "connection", "could not connect", "name or service not known")
+    )
+
+
+def _setup_hint(provider: str) -> str:
+    """Plain-language setup hint for the most common beginner mistake:
+    no API key set, or local LLM server not running. Returned only
+    when the underlying exception looks auth- or connection-shaped, so
+    real bugs aren't drowned in 'have you set your key?' noise."""
+    lines = [
+        "",
+        "  To fix, pick ONE:",
+    ]
+    if provider == "anthropic":
+        lines += [
+            "    export ANTHROPIC_API_KEY=sk-ant-...",
+            "    (get a key at https://console.anthropic.com)",
+        ]
+    elif provider == "openai":
+        lines += [
+            "    export OPENAI_API_KEY=sk-...",
+            "    (get a key at https://platform.openai.com)",
+        ]
+    else:
+        lines += [
+            "    export ANTHROPIC_API_KEY=sk-ant-...    # or",
+            "    export OPENAI_API_KEY=sk-...",
+        ]
+    lines += [
+        "    OR run a local LLM (no key needed):",
+        "      ollama pull qwen2.5:14b && ollama serve",
+        "    OR drop the LLM-judge evaluators from your suite — see",
+        "      `multivon-eval init -t quickstart` for a deterministic-only starter.",
+    ]
+    return "\n".join(lines)
+
+
 def _wrap_provider_error(provider: str, model: str, exc: Exception) -> JudgeUnavailable:
-    """Re-raise a provider SDK exception as JudgeUnavailable with __cause__ preserved."""
+    """Re-raise a provider SDK exception as JudgeUnavailable with __cause__ preserved.
+
+    When the underlying exception looks like missing-credentials or
+    can't-reach-server, the wrapped message includes plain-language
+    setup hints — the #1 beginner mistake."""
+    base_msg = f"Judge call failed: {type(exc).__name__}: {exc}"
+    if _looks_like_auth_or_connection_error(exc):
+        base_msg = base_msg + _setup_hint(provider)
     err = JudgeUnavailable(
-        f"Judge call failed: {type(exc).__name__}: {exc}",
+        base_msg,
         provider=provider,
         model=model,
     )
