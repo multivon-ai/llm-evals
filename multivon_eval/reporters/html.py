@@ -284,36 +284,56 @@ def _status_pill(cr: "CaseResult") -> str:
     whether a case PASSED, failed on QUALITY (a real model regression
     to investigate), errored on infrastructure (judge outage, model
     crash — retry-class, not a quality issue), or was deliberately
-    skipped. Flakiness is its own badge regardless of status because
-    it's a property of the multi-run dimension, not the run outcome.
+    skipped.
+
+    Precedence: errors/skipped first; flaky only modifies pass/fail
+    (a flaky outcome on top of a judge outage is misleading — the
+    underlying signal is the outage). Codex round-2 caught the
+    earlier ordering hiding infra errors behind a FLAKY badge.
+
+    Each pill carries a tooltip AND an ``aria-label`` so the
+    explanation reaches keyboard/touch/screen-reader users who
+    can't hover the native ``title``.
     """
     from ..result import EvalStatus
 
-    # Flakiness takes the slot for cases that completed evaluation but
-    # were inconsistent across runs. Surface BEFORE the status so it's
-    # the dominant signal — a flaky case is more actionable than its
-    # final majority-vote outcome.
-    if cr.is_flaky:
-        return '<span class="pill flaky" title="Case passed inconsistently across runs">FLAKY</span>'
+    def _pill(cls: str, label: str, explanation: str | None = None) -> str:
+        if not explanation:
+            return f'<span class="pill {cls}">{label}</span>'
+        safe = _h(explanation)
+        return (
+            f'<span class="pill {cls}" title="{safe}" aria-label="{label}: {safe}">'
+            f'{label}</span>'
+        )
 
     status = cr.status
-    if status == EvalStatus.PASSED:
-        return '<span class="pill pass">PASS</span>'
-    if status == EvalStatus.FAILED_QUALITY:
-        return '<span class="pill fail">FAIL</span>'
+
+    # Infra failures and skips dominate any per-run flakiness signal —
+    # if the judge was unreachable, "flaky" is not the right framing.
     if status == EvalStatus.SKIPPED:
-        return '<span class="pill skipped" title="Case was deliberately skipped">SKIPPED</span>'
-    # All remaining values are error statuses — show the specific kind
-    # in the badge text (MODEL ERR / JUDGE ERR / EVAL ERR / TIMEOUT) so
-    # the reader knows which subsystem to investigate.
-    label_map = {
-        EvalStatus.MODEL_ERROR: ("MODEL ERR", "Your model_fn raised — not a quality issue"),
-        EvalStatus.JUDGE_ERROR: ("JUDGE ERR", "Judge call failed (transient/auth) — not a quality issue"),
-        EvalStatus.EVALUATOR_ERROR: ("EVAL ERR", "An evaluator itself crashed — likely a bug to file"),
-        EvalStatus.TIMEOUT: ("TIMEOUT", "Case timed out"),
-    }
-    label, tooltip = label_map.get(status, (status.value.upper(), "infrastructure error"))
-    return f'<span class="pill error" title="{_h(tooltip)}">{label}</span>'
+        return _pill("skipped", "SKIPPED", "Case was deliberately skipped")
+    if status in (EvalStatus.MODEL_ERROR, EvalStatus.JUDGE_ERROR,
+                  EvalStatus.EVALUATOR_ERROR, EvalStatus.TIMEOUT):
+        label_map = {
+            EvalStatus.MODEL_ERROR: ("MODEL ERR",
+                                     "Your model_fn raised — not a quality issue"),
+            EvalStatus.JUDGE_ERROR: ("JUDGE ERR",
+                                     "Judge call failed (transient/auth) — not a quality issue"),
+            EvalStatus.EVALUATOR_ERROR: ("EVAL ERR",
+                                         "An evaluator itself crashed — likely a bug to file"),
+            EvalStatus.TIMEOUT: ("TIMEOUT", "Case timed out"),
+        }
+        label, tooltip = label_map[status]
+        return _pill("error", label, tooltip)
+
+    # Quality outcome. Flakiness overrides only here — it's only
+    # meaningful when the case actually completed evaluation across
+    # multiple runs.
+    if cr.is_flaky:
+        return _pill("flaky", "FLAKY", "Case passed inconsistently across runs")
+    if status == EvalStatus.PASSED:
+        return _pill("pass", "PASS")
+    return _pill("fail", "FAIL", "Quality threshold not met")
 
 
 def _h(text: str) -> str:
@@ -366,8 +386,10 @@ def to_html(report: "EvalReport") -> str:
     if report.errors:
         kinds = ", ".join(f"{n} {k.replace('_', ' ')}" for k, n in report.errors_by_kind.items())
         tooltip = f"Infrastructure failures (not quality): {kinds}"
+        # title for hover, aria-label for keyboard / touch / screen readers.
         cards.append(
-            f'<div class="card c-warn" title="{_h(tooltip)}">'
+            f'<div class="card c-warn" title="{_h(tooltip)}" '
+            f'aria-label="{report.errors} errors. {_h(tooltip)}">'
             f'<span class="val">{report.errors}</span>'
             f'<span class="lbl">Errors</span></div>'
         )

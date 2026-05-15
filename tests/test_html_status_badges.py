@@ -167,3 +167,70 @@ def test_html_renders_distinct_pills_for_a_mixed_report():
     html = to_html(report)
     for css_class in ("pill pass", "pill fail", "pill error", "pill skipped"):
         assert css_class in html, f"expected {css_class!r} in HTML output"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Codex round-2 regressions
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_pill_infra_error_dominates_flaky_in_multirun():
+    """Codex caught this: in multi-run, a case with a judge outage
+    AND flaky-vote semantics used to render FLAKY (which hid the infra
+    error). The infra error is the underlying signal — the
+    flaky-looking pass counts are an artifact of the outage."""
+    cr = _make_case(
+        results=[EvalResult("e", 1.0, True)],
+        judge_error="429 rate limit",
+        runs=5,
+        pass_count=2,   # would be flaky if not for the judge error
+    )
+    html = _status_pill(cr)
+    assert ">JUDGE ERR<" in html
+    assert ">FLAKY<" not in html
+    # The case really is in JUDGE_ERROR status, and the badge tracks that.
+    assert cr.status == EvalStatus.JUDGE_ERROR
+
+
+def test_pill_flaky_still_wins_over_pass_when_no_errors():
+    """Flakiness still dominates pass/fail in the absence of an error,
+    because a passing-on-average flaky case is the actionable signal."""
+    cr = _make_case(
+        results=[EvalResult("e", 1.0, True)],
+        runs=5,
+        pass_count=3,   # majority pass, but not consistent
+    )
+    html = _status_pill(cr)
+    assert ">FLAKY<" in html
+
+
+def test_pill_has_aria_label_for_screen_readers():
+    """The tooltip text is also exposed as ``aria-label`` so keyboard,
+    touch, and screen-reader users see it even without hover. Codex
+    accessibility finding."""
+    cr = _make_case(
+        results=[EvalResult("e", 0.0, False)],
+        model_error="ConnectionRefused",
+    )
+    html = _status_pill(cr)
+    assert "aria-label=" in html
+    assert "MODEL ERR" in html
+    # Both title (hover) and aria-label (assistive tech) get the
+    # explanation text.
+    assert html.count("not a quality issue") >= 2
+
+
+def test_pass_pill_has_no_aria_label():
+    """A bare PASS pill doesn't need extra explanation — no aria-label."""
+    cr = _make_case(results=[EvalResult("e", 1.0, True)])
+    html = _status_pill(cr)
+    assert "aria-label" not in html
+
+
+def test_errors_summary_card_has_aria_label():
+    """Same accessibility fix for the Errors summary card."""
+    judge_err = _make_case(judge_error="x", results=[EvalResult("e", 0, False)])
+    report = EvalReport(suite_name="t", case_results=[judge_err])
+    html = to_html(report)
+    assert "aria-label=" in html
+    # The aria-label includes the kind breakdown.
+    assert "judge error" in html.lower()
