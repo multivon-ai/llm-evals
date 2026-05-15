@@ -28,7 +28,9 @@ That's it. The `quickstart` template uses only deterministic evaluators (`NotEmp
 |---|---|---|
 | Brand new — just kicking the tires | `python -m multivon_eval` | No (LLM judges activate if a key is set) |
 | Beginner writing your first eval | `multivon-eval init -t quickstart` | **No** — fully offline |
-| Building an agent (tool-calling) | `multivon-eval init -t agent` | **No** for default eval, optional for richer judging |
+| Building an agent (hand-rolled or any framework) | `multivon-eval init -t agent` | **No** for default eval, optional for richer judging |
+| Building a **LangGraph** agent | `multivon-eval init -t agent-langgraph` | Yes (or local Ollama via `ChatOpenAI(base_url=...)`) |
+| Building an agent with the **OpenAI Agents SDK** | `multivon-eval init -t agent-openai-sdk` | Yes (OpenAI) |
 | Building a RAG / QA system | `multivon-eval init -t rag` | Yes (or local Ollama) |
 | Working a regulated domain | `multivon-eval init -t regulated` | Yes (or local Ollama) |
 | Multi-turn dialogue eval | `multivon-eval init -t conversation` | Yes (or local Ollama) |
