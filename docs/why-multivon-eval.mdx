@@ -1,0 +1,87 @@
+---
+title: Why multivon-eval
+description: Head-to-head numbers vs DeepEval, RAGAS, and Promptfoo — with reproducible benchmarks you can rerun.
+---
+
+The eval-framework category has converged on a small set of primitives. The honest question for a buyer is not *"are checkmarks better here?"* but *"if I run the same task with my judge, do the numbers come out better?"*
+
+Below is what we can show from the public OSS repo. Every number links to a JSON file you can rerun.
+
+## Hallucination detection — HaluEval QA, N=100, human labels
+
+All runs use `claude-haiku-4-5-20251001` as the judge ([source](https://github.com/multivon-ai/multivon-eval/blob/main/benchmarks/results/hallucination.json)).
+
+| Evaluator | Precision | False positives | F1 |
+|---|---:|---:|---:|
+| **multivon-eval (QAG)** | **0.788** | **11** | **0.804** |
+| DeepEval (GPT-4o-mini)  | 0.456 | 49 | 0.586 |
+| Simple LLM judge (1-10) | 0.617 | 31 | 0.763 |
+| Keyword overlap          | 0.605 | 15 | 0.523 |
+
+**What this means.** Binary yes/no questions (QAG) are a more reliable scoring signal than numeric rubrics. The simple 1-10 judge ships ~3× more false positives at the same precision — every false positive in a CI gate is wasted developer time.
+
+## Multi-judge agreement — HaluEval QA, N=50, temp=0
+
+Different judges disagree more than you'd expect. The calibrated-thresholds layer matters precisely because the underlying judge is non-uniform. [Source](https://github.com/multivon-ai/multivon-eval/blob/main/benchmarks/results/multi_judge_agreement.json).
+
+| Judge | Accuracy vs human | Precision | F1 |
+|---|---:|---:|---:|
+| **claude-haiku-4-5** | **0.800** | **0.895** | 0.773 |
+| gpt-4o-mini          | 0.800 | 0.857 | **0.783** |
+| gpt-4o               | 0.760 | 0.783 | 0.750 |
+| claude-sonnet-4-6    | 0.720 | 0.720 | 0.720 |
+
+Pairwise Cohen's κ: 0.52–0.76 — moderate to substantial. `claude-haiku-4-5` has the highest precision and is the default for production gates where false positives are expensive. The lowest scorer (claude-sonnet-4-6) is a useful diversity judge in multi-judge runs, not a default.
+
+## Cost — 50 cases × 4 LLM-judge evaluators
+
+`workers=1` (sequential), real Anthropic API. [Source](https://github.com/multivon-ai/multivon-eval/blob/main/benchmarks/results/cost_latency.json).
+
+| Metric | Value |
+|---|---|
+| Cost per case (4 evaluators) | **$0.00127** |
+| Judge calls per case | 17.1 |
+| Wall-clock for 50 cases | 15 min |
+| Linear extrapolation to 5,000 cases | **$6.35** |
+
+QAG generates multiple yes/no questions per criterion then verifies each — so 4 evaluators ≈ 17 LLM calls. Trade-off is fully auditable scoring (every question / answer is in the report) for a few cents per case.
+
+## Cache speedup on re-runs
+
+Same suite, sequential, with `set_cache(JudgeCache(...))`:
+
+| Run | Wall-clock | Judge calls |
+|---|---|---|
+| Rep 1 (cold) | 2.9 s | 4 |
+| Rep 2 (hot)  | 0 ms | 0 |
+
+Speedup: **2,271×**. CI re-runs (same git SHA + same dataset) converge to zero LLM calls. `set_cache()` auto-enables caching for every JudgeConfig — no need to thread `cache=True` through every evaluator.
+
+## Where competitors lead
+
+We're not better at everything. If your priority is —
+
+- **The widest evaluator catalog**: DeepEval has more pre-built metrics for niche tasks (e.g. summarization-specific G-Eval variants).
+- **A vendor-managed cloud UI**: DeepEval (Confident AI) and Promptfoo Cloud both ship hosted dashboards. We're SDK-first; the HTML viewer is local-only.
+- **Pure prompt-comparison testing**: Promptfoo is purpose-built for "which prompt template wins on these N cases" — it's the right tool for that single job.
+
+## What multivon-eval is built for
+
+- **Trust the score**: QAG + calibrated thresholds + multi-run flakiness detection means a single number from `pass_rate` survives scrutiny.
+- **CI/CD on every PR**: `multivon-eval init --ci github` ships the workflow. Distinct exit codes for quality vs infra failures.
+- **Regulated AI**: hash-chained NDJSON audit logs with paragraph-accurate EU AI Act / NIST AI RMF / HIPAA mappings. `audit-package` produces an auditor-attachable zip — [download a real sample (5.5 KB)](https://github.com/multivon-ai/multivon-eval/raw/main/docs/sample-audit-package.zip).
+- **Agent-native**: tool-call accuracy, trajectory efficiency, step faithfulness — framework-agnostic via `AgentTracer`.
+
+## Reproduce everything
+
+```bash
+git clone https://github.com/multivon-ai/multivon-eval
+cd multivon-eval/benchmarks
+pip install -e .. deepeval python-dotenv
+export ANTHROPIC_API_KEY=...
+python run_all_benchmarks.py
+```
+
+All datasets are public. Judge model versions are pinned. If a number on this page diverges from what you measure, [open an issue](https://github.com/multivon-ai/multivon-eval/issues) — we'll fix it.
+
+> Comparison numbers reflect each project's public releases as of May 2026.

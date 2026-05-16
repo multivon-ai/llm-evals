@@ -1,13 +1,28 @@
 ---
 title: Introduction
-description: AI evaluation for teams that ship models to production.
+description: AI evaluation for teams that need to prove their model is safe to ship.
 ---
 
-**multivon-eval** is an open source Python SDK for evaluating AI outputs — from simple string checks to LLM judges to agent trace analysis.
+## The problem
 
-```bash
-pip install multivon-eval
+Every team building with AI hits the same wall: **how do you know if your model is getting better or worse?** Numeric scores drift, judges hallucinate, and regressions reach users before anyone notices.
+
+multivon-eval gives you eval scoring you can trust *and* defend — calibrated against human labels, statistically rigorous, and audit-ready when you need to ship into regulated environments.
+
+```python
+# pip install multivon-eval
+from multivon_eval import EvalSuite, EvalCase, Faithfulness
+
+suite = EvalSuite("rag")
+suite.add_cases([EvalCase(input="What's the refund window?",
+                          context="Refunds within 30 days.")])
+suite.add_evaluators(Faithfulness())
+report = suite.run(my_model_fn, save_json="report.json")
+
+print(f"Pass rate {report.pass_rate:.0%}  ({report.evaluated} evaluated, {report.errors} errored)")
 ```
+
+That's everything — install, import, run. The default judge is `claude-haiku-4-5` (F1 0.80 on HaluEval QA, $0.00127 per case). Swap in any judge via `JudgeConfig`, or run fully offline with a local Ollama.
 
 ## What it does
 

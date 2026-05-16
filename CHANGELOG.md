@@ -2,6 +2,31 @@
 
 All notable changes to `multivon-eval`. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) as of 0.7.0.
 
+## [0.7.1] — 2026-05-16
+
+Pre-public-launch hardening: two real bugs the new benchmarks surfaced, plus calibration around the numbers we put on the website.
+
+### Fixed
+
+- **`workers > 1` lost every CostTracker record.** `_run_parallel` submitted work via `ThreadPoolExecutor` without copying the caller's `contextvars`, so each worker started in an empty context and the active CostTracker was invisible. `report.costs.total_cost_usd` came back `$0.00` whenever you parallelised. Wrapped each `submit()` call in `contextvars.copy_context().run(...)`. Verified — `workers=4` on 4 Hallucination calls now reports `$0.00022` instead of `$0`.
+- **`set_cache(JudgeCache(...))` was a silent no-op.** The cache only activated when `JudgeConfig(cache=True)` was passed explicitly to each evaluator. Installing a cache globally — the most natural way to opt in — did nothing because `JudgeConfig.cache` defaults to `False`. Added `cache_is_user_opted_in()`; `set_cache(non_none)` now flips it; `JudgeConfig.resolve()` honors it. Verified — sequential rep1→rep2 cache hit goes from 2.9s/4-calls to 0ms/0-calls (~2,271× faster) without any per-evaluator config.
+- **`EvalSuite.run(save_json=..., save_junit_xml=...)` already in 0.7.0 — added documentation here.** Both keyword args write the report BEFORE `fail_threshold` raises `EvalGateFailure`, so a failing gate still leaves an artifact for `multivon-eval view` / `compare`.
+
+### Added (benchmarks)
+
+- `benchmarks/run_multi_judge_agreement_benchmark.py` — pairwise Cohen's κ across `claude-haiku-4-5`, `claude-sonnet-4-6`, `gpt-4o-mini`, `gpt-4o` on the same hallucination cases. Output at `benchmarks/results/multi_judge_agreement.json`. Numbers ship on the website.
+- `benchmarks/run_cost_latency_benchmark.py` — 50 HaluEval cases × 4 LLM-judge evaluators with `workers=1`, real Anthropic billing. `cost_latency.json` reports $0.00127/case, 17 judge calls/case, and a linear $6.35 extrapolation to 5,000 cases.
+- `benchmarks/run_reproducibility_benchmark.py` — 10 cases × 10 reps, cache on/off. Surfaces (a) the cache-miss bug fixed in this release and (b) ~3% irreducible stdev at `temperature=0` across reps of `claude-haiku-4-5`. The cache fix turned this into the 2,271× speedup published on the site.
+- `docs/sample-audit-package.zip` (5.5 KB) — a real `audit-package` zip from the `regulated` template. Linked from the website's Compliance Bundle CTA so buyers can see what an auditor actually receives.
+
+### Changed (docs / README)
+
+- README hero example: `your_llm.generate` placeholder replaced with a real `anthropic.Anthropic()` snippet that runs after `pip install`.
+- README + docs claims aligned to reality: calibration F1 range corrected from "0.76–0.98" to the actual shipped 0.66–1.00; the `2.9× run_async` and `4,700× cache` website claims (the latter conservatively true now but unsupported in the repo) are replaced with the linkable benchmark numbers above.
+- New docs page: [Why multivon-eval](https://evaldocs.multivon.ai/why-multivon-eval) with head-to-head benchmark tables.
+
+
+
 ## [0.7.0] — 2026-05-16
 
 The trust release: explicit error classification so a transient judge outage no longer masquerades as a model regression, plus the first major batch of community-facing usability work — JUnit CI integration, a local HTML report viewer, classical similarity metrics, repaired examples and notebooks.
