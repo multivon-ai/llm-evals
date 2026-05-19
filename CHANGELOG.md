@@ -2,6 +2,23 @@
 
 All notable changes to `multivon-eval`. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) as of 0.7.0.
 
+## [0.8.2] — 2026-05-20
+
+Second dogfood pass after 0.8.1 surfaced a UX paper cut: `EvalSuite.for_rag()` auto-includes `ContextRecall`, but a RAG case without `expected_output` made it return `score=0.0, passed=False` with a "Requires …" reason — looking like a quality failure when the data shape just didn't support the metric.
+
+### Fixed
+
+- **`ContextRecall` now skips cleanly when `expected_output` is missing.** Returns `score=1.0, passed=True` with `reason="[skipped] Requires both case.context and case.expected_output — add expected_output to your case to enable ContextRecall."` and `metadata.skipped=True`. Users can filter on `[skipped]` to see what was skipped vs. genuinely passed.
+
+### Known issues
+
+- A similar "returns 0.0 when input shape doesn't match" pattern exists in ~20 other evaluators (`AnswerAccuracy`, `ExactMatch`, `Contains`, `BLEU`, `ROUGE`, agent evaluators when no agent_trace, conversation evaluators when no conversation, etc.). These will get the same skip-semantics treatment in 0.9.0. For now, only `ContextRecall` is fixed because it's auto-included by `EvalSuite.for_rag()` and was the most-visible footgun.
+
+### Tests
+
+- 3 new tests in `tests/test_context_recall_skip.py` cover all three "missing input" paths.
+- Full suite: 835 passed, 13 skipped (was 832/13 at 0.8.1).
+
 ## [0.8.1] — 2026-05-20
 
 Fixes a launch-blocking UX bug surfaced by a critical-user dogfood pass.

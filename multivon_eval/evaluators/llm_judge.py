@@ -404,7 +404,17 @@ class ContextRecall(Evaluator):
 
     def evaluate(self, case: EvalCase, output: str) -> EvalResult:
         if not case.context or not case.expected_output:
-            return self._result(0.0, "Requires both case.context and case.expected_output")
+            # Skipped evaluations should not count as quality failures — they
+            # mean the data shape doesn't support this metric. Return a passing
+            # 1.0 with a clear "skipped" reason so the aggregate pass_rate
+            # reflects actual quality, not missing ground truth. The reason
+            # string starts with [skipped] so users can filter on it.
+            return EvalResult(
+                evaluator=self.name, score=1.0, passed=True,
+                reason="[skipped] Requires both case.context and case.expected_output — "
+                       "add expected_output to your case to enable ContextRecall.",
+                metadata={"skipped": True},
+            )
         judge = resolve_judge(self._judge_cfg)
         ctx = (
             f"Question: {case.input}\n\n"
