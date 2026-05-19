@@ -2,6 +2,19 @@
 
 All notable changes to `multivon-eval`. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) as of 0.7.0.
 
+## [0.8.1] — 2026-05-20
+
+Fixes a launch-blocking UX bug surfaced by a critical-user dogfood pass.
+
+### Fixed
+
+- **`run_with_anthropic` / `run_with_openai` / `run_with_litellm` now auto-inject `EvalCase.context` into the system prompt.** Previously, every RAG case run via these one-line helpers silently dropped its context — Claude/GPT got the question with no grounding, faithfulness/hallucination evaluators scored 0/N against the empty-context reality, and users had no signal that the helper wasn't doing what its name implied. Adapter contract extended via a new optional `_call_with_case(case)` method that the suite uses when available; existing custom adapters (string-only `__call__`) are unaffected. List-valued contexts are formatted with `[chunk i]` markers so the model sees the boundaries.
+
+### Tests
+
+- 14 new tests in `tests/test_adapter_context_injection.py` cover: `_format_context_block` helper, AnthropicAdapter / OpenAIAdapter context injection, system-prompt composition with both user-supplied and RAG prefixes, list-valued context, suite routing to `_call_with_case` when available + fallback for plain callables.
+- Full suite: 832 passed, 13 skipped (was 818/13 at 0.8.0).
+
 ## [0.8.0] — 2026-05-20
 
 The intelligent-eval release. Two new public surfaces solve the "I don't know what to eval" cold-start problem for teams shipping LLM products: a CLI bootstrap command that proposes a tuned EvalSuite from a product description + sample traces, and a `multivon_eval.auto` module that exposes the underlying primitives (case-shape inference, LLM-driven adversarial generation, N-shot judge-noise aggregation) for users who want to compose their own pipelines.

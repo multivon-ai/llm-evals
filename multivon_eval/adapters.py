@@ -10,10 +10,45 @@ to suite.run() since it implements __call__(input: str) -> str.
             return my_client.generate(self._build_prompt(input))
 
     report = suite.run(MyAdapter())
+
+Built-in adapters (``OpenAIAdapter``, ``AnthropicAdapter``, ``LiteLLMAdapter``)
+also implement ``_call_with_case(case)`` so they receive the full ``EvalCase``
+when the suite runs them, automatically injecting any ``case.context`` into
+the system prompt for RAG cases. Custom adapters that only override
+``__call__`` get the string-in/string-out behavior unchanged.
 """
 from __future__ import annotations
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .case import EvalCase
+
+
+def _format_context_block(context: Any) -> str:
+    """Turn ``case.context`` (str | list[str] | None) into a system-prompt block.
+
+    Returns the empty string if there's no context. RAG users typically want
+    the chunks separated visually so the model knows where one ends and the
+    next begins.
+    """
+    if context is None or context == "":
+        return ""
+    if isinstance(context, str):
+        return f"\n\nContext:\n{context}\n"
+    if isinstance(context, list):
+        chunks = "\n\n".join(
+            f"[chunk {i + 1}]\n{chunk}" for i, chunk in enumerate(context) if chunk
+        )
+        return f"\n\nContext:\n{chunks}\n"
+    return ""
+
+
+_RAG_SYSTEM_PREFIX = (
+    "You are answering based on the provided context. Use ONLY the information "
+    "in the context below to answer the question. If the answer is not in the "
+    "context, say so explicitly rather than guessing."
+)
 
 
 class ModelAdapter(ABC):
@@ -123,6 +158,32 @@ class OpenAIAdapter(ModelAdapter):
         )
         return response.choices[0].message.content or ""
 
+    def _call_with_case(self, case: "EvalCase") -> str:
+        """Context-aware entry point used by ``suite.run()`` when available.
+
+        Auto-injects ``case.context`` into the system prompt so RAG cases work
+        with ``run_with_openai`` out of the box.
+        """
+        client = self._get_client()
+        ctx_block = _format_context_block(case.context)
+        messages: list[dict[str, str]] = []
+        if ctx_block:
+            base_system = (self._system_prompt + "\n\n" if self._system_prompt else "") \
+                + _RAG_SYSTEM_PREFIX + ctx_block
+            messages.append({"role": "system", "content": base_system})
+        elif self._system_prompt:
+            messages.append({"role": "system", "content": self._system_prompt})
+        messages.append({"role": "user", "content": case.input})
+
+        response = client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            temperature=self._temperature,
+            max_tokens=self._max_tokens,
+            **self._extra,
+        )
+        return response.choices[0].message.content or ""
+
 
 class LiteLLMAdapter(ModelAdapter):
     """
@@ -210,6 +271,34 @@ class LiteLLMAdapter(ModelAdapter):
         )
         return response.choices[0].message.content or ""
 
+    def _call_with_case(self, case: "EvalCase") -> str:
+        """Context-aware entry point — auto-injects ``case.context`` for RAG."""
+        try:
+            import litellm
+        except ImportError:
+            raise ImportError(
+                "litellm is required for LiteLLMAdapter: "
+                "pip install 'multivon-eval[litellm]'"
+            )
+        ctx_block = _format_context_block(case.context)
+        messages: list[dict[str, str]] = []
+        if ctx_block:
+            base_system = (self._system_prompt + "\n\n" if self._system_prompt else "") \
+                + _RAG_SYSTEM_PREFIX + ctx_block
+            messages.append({"role": "system", "content": base_system})
+        elif self._system_prompt:
+            messages.append({"role": "system", "content": self._system_prompt})
+        messages.append({"role": "user", "content": case.input})
+
+        response = litellm.completion(
+            model=self.model,
+            messages=messages,
+            temperature=self._temperature,
+            max_tokens=self._max_tokens,
+            **self._extra,
+        )
+        return response.choices[0].message.content or ""
+
 
 class AnthropicAdapter(ModelAdapter):
     """
@@ -273,5 +362,33 @@ class AnthropicAdapter(ModelAdapter):
         )
         if self._system_prompt:
             kwargs["system"] = self._system_prompt
+        response = client.messages.create(**kwargs)
+        return response.content[0].text
+
+    def _call_with_case(self, case: "EvalCase") -> str:
+        """Context-aware entry point used by ``suite.run()`` when available.
+
+        Auto-injects ``case.context`` into the system prompt so RAG cases work
+        with ``run_with_anthropic`` out of the box. Subclasses that override
+        ``__call__`` for custom prompt building can also override this method
+        if they want fine-grained case access.
+        """
+        client = self._get_client()
+        ctx_block = _format_context_block(case.context)
+        if ctx_block:
+            system = (self._system_prompt + "\n\n" if self._system_prompt else "") \
+                + _RAG_SYSTEM_PREFIX + ctx_block
+        else:
+            system = self._system_prompt
+
+        kwargs: dict[str, Any] = dict(
+            model=self.model,
+            messages=self._build_messages(case.input),
+            temperature=self._temperature,
+            max_tokens=self._max_tokens,
+            **self._extra,
+        )
+        if system:
+            kwargs["system"] = system
         response = client.messages.create(**kwargs)
         return response.content[0].text

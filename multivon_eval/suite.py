@@ -173,7 +173,15 @@ class EvalSuite:
         t0 = time.time()
         model_error: str | None = None
         try:
-            output = model_fn(case.input)
+            # If the model_fn is a context-aware adapter (e.g. AnthropicAdapter
+            # in 0.8.1+), give it the full case so RAG / agent / multimodal
+            # cases can have context injected. Otherwise fall back to the
+            # standard str-in/str-out contract.
+            call_with_case = getattr(model_fn, "_call_with_case", None)
+            if callable(call_with_case):
+                output = call_with_case(case)
+            else:
+                output = model_fn(case.input)
         except Exception as e:
             model_error = str(e)
             output = f"[MODEL ERROR: {e}]"
@@ -1405,7 +1413,14 @@ class EvalSuite:
                     t0 = time.time()
                     async_model_error: str | None = None
                     try:
-                        output = await model_fn(case.input)
+                        # Same context-aware-adapter hook as the sync path
+                        # (suite._run_case_once). Async adapters can expose
+                        # `_acall_with_case` to receive the EvalCase.
+                        acall_with_case = getattr(model_fn, "_acall_with_case", None)
+                        if callable(acall_with_case):
+                            output = await acall_with_case(case)
+                        else:
+                            output = await model_fn(case.input)
                     except Exception as e:
                         async_model_error = str(e)
                         output = f"[MODEL ERROR: {e}]"
